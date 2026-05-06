@@ -1,6 +1,9 @@
 name: Docker Image CI - Docker Hub
 
 on:
+    push:
+        branches:
+            - main
     workflow_dispatch:
         inputs:
             node_version:
@@ -48,7 +51,7 @@ jobs:
               uses: docker/build-push-action@v6.19.2
               with:
                   context: .
-                  file: ./docker/Dockerfile
+                  file: ./Dockerfile
                   build-args: |
                       NODE_VERSION=${{ steps.defaults.outputs.node_version }}
                   platforms: linux/amd64,linux/arm64
