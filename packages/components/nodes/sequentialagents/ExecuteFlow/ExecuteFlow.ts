@@ -106,6 +106,15 @@ class ExecuteFlow_SeqAgents implements INode {
                 additionalParams: true
             },
             {
+                label: 'Pass Uploads from Chat',
+                name: 'passUploadsFromChat',
+                type: 'boolean',
+                description: 'Whether to forward file/media uploads from the parent chat to this chatflow.',
+                default: true,
+                optional: true,
+                additionalParams: true
+            },
+            {
                 label: 'Return Value As',
                 name: 'returnValueAs',
                 type: 'options',
@@ -154,6 +163,7 @@ class ExecuteFlow_SeqAgents implements INode {
         if (!_seqExecuteFlowName) throw new Error('Execute Flow node name is required!')
         const seqExecuteFlowName = _seqExecuteFlowName.toLowerCase().replace(/\s/g, '_').trim()
         const startNewSession = nodeData.inputs?.startNewSession as boolean
+        const passUploadsFromChat = (nodeData.inputs?.passUploadsFromChat as boolean) ?? true
         const appDataSource = options.appDataSource as DataSource
         const databaseEntities = options.databaseEntities as IDatabaseEntity
         const sequentialNodes = nodeData.inputs?.sequentialNode as ISeqAgentNode[]
@@ -218,13 +228,17 @@ class ExecuteFlow_SeqAgents implements INode {
                 state
             }
 
-            const body = {
+            const body: any = {
                 question: flowInput,
                 chatId: startNewSession ? uuidv4() : chatId,
                 overrideConfig: {
                     sessionId: startNewSession ? uuidv4() : sessionId,
                     ...(overrideConfig ?? {})
                 }
+            }
+
+            if (passUploadsFromChat && options.uploads?.length) {
+                body.uploads = options.uploads
             }
 
             const callOptions = {
