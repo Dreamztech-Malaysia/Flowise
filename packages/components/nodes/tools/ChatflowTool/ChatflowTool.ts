@@ -3,7 +3,7 @@ import { z } from 'zod/v3'
 import { RunnableConfig } from '@langchain/core/runnables'
 import { CallbackManagerForToolRun, Callbacks, CallbackManager, parseCallbackConfigArg } from '@langchain/core/callbacks/manager'
 import { StructuredTool } from '@langchain/core/tools'
-import { ICommonObject, IDatabaseEntity, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
+import { ICommonObject, IDatabaseEntity, IFileUpload, INode, INodeData, INodeOptionsValue, INodeParams } from '../../../src/Interface'
 import {
     getCredentialData,
     getCredentialParam,
@@ -99,6 +99,15 @@ class ChatflowTool_Tools implements INode {
                 additionalParams: true
             },
             {
+                label: 'Pass Uploads from Chat',
+                name: 'passUploadsFromChat',
+                type: 'boolean',
+                description: 'Whether to forward file/media uploads from the parent chat to this chatflow.',
+                default: true,
+                optional: true,
+                additionalParams: true
+            },
+            {
                 label: 'Use Question from Chat',
                 name: 'useQuestionFromChat',
                 type: 'boolean',
@@ -172,6 +181,7 @@ class ChatflowTool_Tools implements INode {
                 : nodeData.inputs?.overrideConfig
 
         const startNewSession = nodeData.inputs?.startNewSession as boolean
+        const passUploadsFromChat = (nodeData.inputs?.passUploadsFromChat as boolean) ?? true
 
         const baseURL = (nodeData.inputs?.baseURL as string) || (options.baseURL as string)
 
@@ -209,6 +219,8 @@ class ChatflowTool_Tools implements INode {
             returnDirect,
             chatflowid: selectedChatflowId,
             startNewSession,
+            passUploadsFromChat,
+            uploads: options.uploads as IFileUpload[] | undefined,
             headers,
             input: toolInput,
             overrideConfig
@@ -231,6 +243,10 @@ class ChatflowTool extends StructuredTool {
 
     startNewSession = false
 
+    passUploadsFromChat = true
+
+    uploads?: IFileUpload[]
+
     baseURL = 'http://localhost:3000'
 
     headers = {}
@@ -249,6 +265,8 @@ class ChatflowTool extends StructuredTool {
         input,
         chatflowid,
         startNewSession,
+        passUploadsFromChat,
+        uploads,
         baseURL,
         headers,
         overrideConfig
@@ -259,6 +277,8 @@ class ChatflowTool extends StructuredTool {
         input: string
         chatflowid: string
         startNewSession: boolean
+        passUploadsFromChat: boolean
+        uploads?: IFileUpload[]
         baseURL: string
         headers: ICommonObject
         overrideConfig?: object
@@ -269,6 +289,8 @@ class ChatflowTool extends StructuredTool {
         this.input = input
         this.baseURL = baseURL
         this.startNewSession = startNewSession
+        this.passUploadsFromChat = passUploadsFromChat
+        this.uploads = uploads
         this.headers = headers
         this.chatflowid = chatflowid
         this.overrideConfig = overrideConfig
@@ -279,7 +301,7 @@ class ChatflowTool extends StructuredTool {
         arg: z.infer<typeof this.schema>,
         configArg?: RunnableConfig | Callbacks,
         tags?: string[],
-        flowConfig?: { sessionId?: string; chatId?: string; input?: string }
+        flowConfig?: { sessionId?: string; chatId?: string; input?: string; uploads?: IFileUpload[] }
     ): Promise<string> {
         const config = parseCallbackConfigArg(configArg)
         if (config.runName === undefined) {
@@ -327,11 +349,11 @@ class ChatflowTool extends StructuredTool {
     protected async _call(
         arg: z.infer<typeof this.schema>,
         _?: CallbackManagerForToolRun,
-        flowConfig?: { sessionId?: string; chatId?: string; input?: string }
+        flowConfig?: { sessionId?: string; chatId?: string; input?: string; uploads?: IFileUpload[] }
     ): Promise<string> {
         const inputQuestion = this.input || arg.input
 
-        const body = {
+        const body: ICommonObject = {
             question: inputQuestion,
             chatId: this.startNewSession ? uuidv4() : flowConfig?.chatId,
             overrideConfig: {
@@ -339,6 +361,11 @@ class ChatflowTool extends StructuredTool {
                 ...(this.overrideConfig ?? {}),
                 ...(arg.overrideConfig ?? {})
             }
+        }
+
+        const resolvedUploads = this.uploads ?? flowConfig?.uploads
+        if (this.passUploadsFromChat && resolvedUploads?.length) {
+            body.uploads = resolvedUploads
         }
 
         const options = {
