@@ -62,14 +62,14 @@ jobs:
             # -------------------------
             # Build and push worker image
             # -------------------------
-            - name: Build and push worker image
-              uses: docker/build-push-action@v6.19.2
-              with:
-                  context: .
-                  file: docker/worker/Dockerfile
-                  build-args: |
-                      NODE_VERSION=${{ steps.defaults.outputs.node_version }}
-                  platforms: linux/amd64,linux/arm64
-                  push: true
-                  tags: |
-                      flatpaddy/flowise-worker:${{ steps.defaults.outputs.tag_version }}
+            # - name: Build and push worker image
+            #   uses: docker/build-push-action@v6.19.2
+            #   with:
+            #       context: .
+            #       file: docker/worker/Dockerfile
+            #       build-args: |
+            #           NODE_VERSION=${{ steps.defaults.outputs.node_version }}
+            #       platforms: linux/amd64,linux/arm64
+            #       push: true
+            #       tags: |
+            #           flatpaddy/flowise-worker:${{ steps.defaults.outputs.tag_version }}
