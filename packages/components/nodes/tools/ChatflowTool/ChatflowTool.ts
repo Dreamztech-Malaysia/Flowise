@@ -215,12 +215,7 @@ class ChatflowTool_Tools implements INode {
 
         let uploads = options.uploads as IFileUpload[] | undefined
         if (passUploadsFromChat && uploads?.length) {
-            uploads = await resolveStoredUploads(
-                uploads,
-                options.orgId as string,
-                options.chatflowid as string,
-                options.chatId as string
-            )
+            uploads = await resolveStoredUploads(uploads, options.orgId as string, options.chatflowid as string, options.chatId as string)
         }
 
         return new ChatflowTool({
