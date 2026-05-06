@@ -93,6 +93,14 @@ class ExecuteFlow_Agentflow implements INode {
                 default: 'userMessage'
             },
             {
+                label: 'Pass Uploads from Chat',
+                name: 'executeFlowPassUploadsFromChat',
+                type: 'boolean',
+                description: 'Whether to forward file/media uploads from the parent chat to this chatflow.',
+                default: true,
+                optional: true
+            },
+            {
                 label: 'Update Flow State',
                 name: 'executeFlowUpdateState',
                 description: 'Update runtime state during the execution of the workflow',
@@ -164,6 +172,7 @@ class ExecuteFlow_Agentflow implements INode {
         const flowInput = nodeData.inputs?.executeFlowInput as string
         const returnResponseAs = nodeData.inputs?.executeFlowReturnResponseAs as string
         const _executeFlowUpdateState = nodeData.inputs?.executeFlowUpdateState
+        const passUploadsFromChat = (nodeData.inputs?.executeFlowPassUploadsFromChat as boolean) ?? true
 
         let overrideConfig = nodeData.inputs?.executeFlowOverrideConfig
         if (typeof overrideConfig === 'string' && overrideConfig.startsWith('{') && overrideConfig.endsWith('}')) {
@@ -199,7 +208,8 @@ class ExecuteFlow_Agentflow implements INode {
                 data: {
                     question: flowInput,
                     chatId: options.chatId,
-                    overrideConfig
+                    overrideConfig,
+                    ...(passUploadsFromChat && options.uploads?.length ? { uploads: options.uploads } : {})
                 }
             }
 
