@@ -1,6 +1,7 @@
 import {
     ICommonObject,
     IDatabaseEntity,
+    IFileUpload,
     INode,
     INodeData,
     INodeOptionsValue,
@@ -9,7 +10,7 @@ import {
 } from '../../../src/Interface'
 import { AxiosRequestConfig } from 'axios'
 import { secureAxiosRequest } from '../../../src/httpSecurity'
-import { getCredentialData, getCredentialParam, processTemplateVariables, parseJsonBody } from '../../../src/utils'
+import { getCredentialData, getCredentialParam, processTemplateVariables, parseJsonBody, resolveStoredUploads } from '../../../src/utils'
 import { DataSource } from 'typeorm'
 import { BaseMessageLike } from '@langchain/core/messages'
 import { updateFlowState } from '../utils'
@@ -200,6 +201,16 @@ class ExecuteFlow_Agentflow implements INode {
             }
             if (chatflowApiKey) headers = { ...headers, Authorization: `Bearer ${chatflowApiKey}` }
 
+            let resolvedUploads = options.uploads as IFileUpload[] | undefined
+            if (passUploadsFromChat && resolvedUploads?.length) {
+                resolvedUploads = await resolveStoredUploads(
+                    resolvedUploads,
+                    options.orgId as string,
+                    options.chatflowid as string,
+                    options.chatId as string
+                )
+            }
+
             const finalUrl = `${baseURL}/api/v1/prediction/${selectedFlowId}`
             const requestConfig: AxiosRequestConfig = {
                 method: 'POST',
@@ -209,7 +220,7 @@ class ExecuteFlow_Agentflow implements INode {
                     question: flowInput,
                     chatId: options.chatId,
                     overrideConfig,
-                    ...(passUploadsFromChat && options.uploads?.length ? { uploads: options.uploads } : {})
+                    ...(passUploadsFromChat && resolvedUploads?.length ? { uploads: resolvedUploads } : {})
                 }
             }
 

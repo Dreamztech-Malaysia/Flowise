@@ -2346,3 +2346,36 @@ export const toolSchemaToJsonSchema = (schema: unknown): ToolJsonSchema => {
     }
     return jsonSchema
 }
+
+/**
+ * Resolves stored-file uploads back to inline base64 before forwarding to a child chatflow.
+ *
+ * When a parent agentflow processes uploads, files are saved to disk and the upload type
+ * changes from 'file' (with base64 data) to 'stored-file' (no data). If these are passed
+ * directly to a child chatflow via ExecuteFlow or ChatflowTool, the child cannot find them
+ * because the path is relative to the parent's chatflowId + chatId. This function reads
+ * each stored-file from the parent's storage context and re-encodes it as base64 so the
+ * child receives self-contained 'file' type uploads it can store under its own path.
+ */
+export const resolveStoredUploads = async (
+    uploads: IFileUpload[],
+    orgId: string,
+    chatflowid: string,
+    chatId: string
+): Promise<IFileUpload[]> => {
+    return Promise.all(
+        uploads.map(async (upload) => {
+            if (upload.type !== 'stored-file') return upload
+            try {
+                const buffer = await getFileFromStorage(upload.name, orgId, chatflowid, chatId)
+                return {
+                    ...upload,
+                    type: 'file',
+                    data: `data:${upload.mime};base64,${buffer.toString('base64')}`
+                } as IFileUpload
+            } catch {
+                return upload
+            }
+        })
+    )
+}

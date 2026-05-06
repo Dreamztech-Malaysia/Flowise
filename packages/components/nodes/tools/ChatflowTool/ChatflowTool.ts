@@ -9,7 +9,8 @@ import {
     getCredentialParam,
     executeJavaScriptCode,
     createCodeExecutionSandbox,
-    parseWithTypeConversion
+    parseWithTypeConversion,
+    resolveStoredUploads
 } from '../../../src/utils'
 import { isValidUUID, isValidURL } from '../../../src/validator'
 import { v4 as uuidv4 } from 'uuid'
@@ -212,6 +213,16 @@ class ChatflowTool_Tools implements INode {
 
         let name = _name || 'chatflow_tool'
 
+        let uploads = options.uploads as IFileUpload[] | undefined
+        if (passUploadsFromChat && uploads?.length) {
+            uploads = await resolveStoredUploads(
+                uploads,
+                options.orgId as string,
+                options.chatflowid as string,
+                options.chatId as string
+            )
+        }
+
         return new ChatflowTool({
             name,
             baseURL,
@@ -220,7 +231,7 @@ class ChatflowTool_Tools implements INode {
             chatflowid: selectedChatflowId,
             startNewSession,
             passUploadsFromChat,
-            uploads: options.uploads as IFileUpload[] | undefined,
+            uploads,
             headers,
             input: toolInput,
             overrideConfig

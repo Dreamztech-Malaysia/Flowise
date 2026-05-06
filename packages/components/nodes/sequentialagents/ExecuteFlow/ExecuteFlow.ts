@@ -1,9 +1,10 @@
 import { DataSource } from 'typeorm'
-import { getCredentialData, getCredentialParam, getVars, executeJavaScriptCode, createCodeExecutionSandbox } from '../../../src/utils'
+import { getCredentialData, getCredentialParam, getVars, executeJavaScriptCode, createCodeExecutionSandbox, resolveStoredUploads } from '../../../src/utils'
 import { isValidUUID, isValidURL } from '../../../src/validator'
 import {
     ICommonObject,
     IDatabaseEntity,
+    IFileUpload,
     INode,
     INodeData,
     INodeOptionsValue,
@@ -238,7 +239,12 @@ class ExecuteFlow_SeqAgents implements INode {
             }
 
             if (passUploadsFromChat && options.uploads?.length) {
-                body.uploads = options.uploads
+                body.uploads = await resolveStoredUploads(
+                    options.uploads as IFileUpload[],
+                    options.orgId as string,
+                    chatflowId as string,
+                    chatId as string
+                )
             }
 
             const callOptions = {
