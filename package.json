@@ -90,6 +90,9 @@
             "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
             "uuid": "^10.0.0",
             "request>uuid": "^3.4.0"
+        },
+        "patchedDependencies": {
+            "@langchain/openai@1.2.5": "patches/@langchain__openai@1.2.5.patch"
         }
     },
     "engines": {
