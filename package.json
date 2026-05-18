@@ -92,7 +92,8 @@
             "request>uuid": "^3.4.0"
         },
         "patchedDependencies": {
-            "@langchain/openai@1.2.5": "patches/@langchain__openai@1.2.5.patch"
+            "@langchain/openai@1.2.5": "patches/@langchain__openai@1.2.5.patch",
+            "@langchain/deepseek@1.0.9": "patches/@langchain__deepseek@1.0.9.patch"
         }
     },
     "engines": {

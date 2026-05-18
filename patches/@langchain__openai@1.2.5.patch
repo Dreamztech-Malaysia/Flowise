@@ -1,3 +1,35 @@
+diff --git a/dist/converters/completions.cjs b/dist/converters/completions.cjs
+index 41c6a6b31101d3f2553d9844d55f6160712571fd..696ea04c690c83597563b692543ee20857bcfaaf 100644
+--- a/dist/converters/completions.cjs
++++ b/dist/converters/completions.cjs
+@@ -469,10 +469,15 @@ const convertStandardContentMessageToCompletionsMessage = ({ message, model }) =
+ 		role: "system",
+ 		content: message.contentBlocks.filter((block) => block.type === "text")
+ 	};
+-	else if (role === "assistant") return {
+-		role: "assistant",
+-		content: message.contentBlocks.filter((block) => block.type === "text")
+-	};
++	else if (role === "assistant") {
++		const assistantParam = {
++			role: "assistant",
++			content: message.contentBlocks.filter((block) => block.type === "text")
++		};
++		const reasoningContent = message.additional_kwargs?.reasoning_content;
++		if (reasoningContent != null) assistantParam.reasoning_content = reasoningContent;
++		return assistantParam;
++	}
+ 	else if (role === "tool" && __langchain_core_messages.ToolMessage.isInstance(message)) return {
+ 		role: "tool",
+ 		tool_call_id: message.tool_call_id,
+@@ -589,6 +594,7 @@ const convertMessagesToCompletionsMessageParams = ({ messages, model }) => {
+ 			if (message.additional_kwargs.tool_calls != null) completionParam.tool_calls = message.additional_kwargs.tool_calls;
+ 			if (__langchain_core_messages.ToolMessage.isInstance(message) && message.tool_call_id != null) completionParam.tool_call_id = message.tool_call_id;
+ 		}
++		if (role === "assistant" && message.additional_kwargs.reasoning_content != null) completionParam.reasoning_content = message.additional_kwargs.reasoning_content;
+ 		if (message.additional_kwargs.audio && typeof message.additional_kwargs.audio === "object" && "id" in message.additional_kwargs.audio) {
+ 			const audioMessage = {
+ 				role: "assistant",
 diff --git a/dist/converters/completions.js b/dist/converters/completions.js
 index 7a7adf58a6f21e12494ece593c00255604cc60b2..21b23b4718491d083b201fc34ea7eb3086d16686 100644
 --- a/dist/converters/completions.js
