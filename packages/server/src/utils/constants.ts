@@ -10,6 +10,7 @@ export const WHITELIST_URLS = [
     '/api/v1/public-chatbotConfig',
     '/api/v1/public-executions',
     '/api/v1/prediction/',
+    '/api/v1/webhook/',
     '/api/v1/chatmessage/abort',
     '/api/v1/node-icon/',
     '/api/v1/components-credentials-icon/',
@@ -56,7 +57,7 @@ export const WHITELIST_URLS = [
     GithubSSO.CALLBACK_URI
 ]
 
-export const API_KEY_BLACKLIST_URLS = ['/api/v1/nvidia-nim', '/api/v1/account/delete']
+export const API_KEY_BLACKLIST_URLS = ['/api/v1/nvidia-nim', '/api/v1/account/delete', '/api/v1/files']
 
 export const enum GeneralErrorMessage {
     FORBIDDEN = 'Forbidden',
