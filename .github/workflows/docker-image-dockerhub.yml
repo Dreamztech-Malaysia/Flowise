@@ -33,8 +33,8 @@ jobs:
             - name: Set values
               id: defaults
               run: |
-                  echo "node_version=${{ github.event.inputs.node_version }}" >> $GITHUB_OUTPUT
-                  echo "tag_version=${{ github.event.inputs.tag_version }}" >> $GITHUB_OUTPUT
+                  echo "node_version=${{ github.event.inputs.node_version || '20' }}" >> $GITHUB_OUTPUT
+                  echo "tag_version=${{ github.event.inputs.tag_version || 'latest' }}" >> $GITHUB_OUTPUT
 
     build:
         needs: prepare
