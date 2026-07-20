@@ -493,6 +493,12 @@ class LLM_Agentflow implements INode {
             } else {
                 response = await llmNodeInstance.invoke(messages, { signal: abortController?.signal })
 
+                if (isStructuredOutput && response == null) {
+                    throw new Error(
+                        'Model did not return the expected structured output. Ensure the model supports function calling, or try a more capable model.'
+                    )
+                }
+
                 // Stream whole response back to UI if this is the last node
                 if (isLastNode && options.sseStreamer) {
                     const sseStreamer: IServerSideEventStreamer = options.sseStreamer as IServerSideEventStreamer

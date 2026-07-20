@@ -113,7 +113,7 @@ class Agent_Agentflow implements INode {
     constructor() {
         this.label = 'Agent'
         this.name = 'agentAgentflow'
-        this.version = 3.3
+        this.version = 3.4
         this.type = 'Agent'
         this.category = 'Agent Flows'
         this.description = 'Dynamically choose and utilize tools during runtime, enabling multi-step reasoning'
@@ -442,6 +442,16 @@ class Agent_Agentflow implements INode {
                     }
                 ],
                 default: 'userMessage'
+            },
+            {
+                label: 'Fallback Output on Error',
+                name: 'agentFallbackOutput',
+                type: 'string',
+                rows: 4,
+                description:
+                    'If the agent fails, return this value as the node output instead of stopping the flow with an error. Set it to a variable such as the previous node output to pass it through unchanged.',
+                optional: true,
+                acceptVariable: true
             },
             {
                 label: 'JSON Structured Output',
@@ -1405,13 +1415,19 @@ class Agent_Agentflow implements INode {
             if (isStructuredOutput) {
                 const structuredllmNodeInstance = configureStructuredOutput(llmWithoutToolsBind, _agentStructuredOutput)
                 const prompt = 'Convert the following response to the structured output format: ' + finalResponse
-                response = await structuredllmNodeInstance.invoke(prompt, { signal: abortController?.signal })
+                const structuredResponse = await structuredllmNodeInstance.invoke(prompt, { signal: abortController?.signal })
 
-                // Prefix the response with ```json and suffix with ``` to render as a code block
-                if (typeof response === 'object') {
-                    finalResponse = '```json\n' + JSON.stringify(response, null, 2) + '\n```'
+                if (structuredResponse == null) {
+                    // Model did not call the structured output function; fall back to the unstructured response
+                    response = new AIMessageChunk(finalResponse)
                 } else {
-                    finalResponse = response
+                    response = structuredResponse
+                    // Prefix the response with ```json and suffix with ``` to render as a code block
+                    if (typeof structuredResponse === 'object') {
+                        finalResponse = '```json\n' + JSON.stringify(structuredResponse, null, 2) + '\n```'
+                    } else {
+                        finalResponse = structuredResponse
+                    }
                 }
 
                 if (isLastNode && sseStreamer) {
@@ -1560,7 +1576,38 @@ class Agent_Agentflow implements INode {
             if (error instanceof Error && error.message === 'Aborted') {
                 throw error
             }
-            throw new Error(`Error in Agent node: ${error instanceof Error ? error.message : String(error)}`)
+
+            const errorMessage = `Error in Agent node: ${error instanceof Error ? error.message : String(error)}`
+
+            // Fail open: return the configured fallback output instead of stopping the flow
+            const fallbackOutput = nodeData.inputs?.agentFallbackOutput
+            if (fallbackOutput && typeof fallbackOutput === 'string') {
+                if (options.isLastNode && options.sseStreamer) {
+                    const sseStreamer = options.sseStreamer as IServerSideEventStreamer
+                    sseStreamer.streamTokenEvent(options.chatId, fallbackOutput)
+                }
+
+                const returnRole = nodeData.inputs?.agentReturnResponseAs === 'assistantMessage' ? 'assistant' : 'user'
+                return {
+                    id: nodeData.id,
+                    name: this.name,
+                    input: nodeData.inputs,
+                    output: {
+                        content: fallbackOutput,
+                        error: errorMessage
+                    },
+                    state: options.agentflowRuntime?.state ?? {},
+                    chatHistory: [
+                        {
+                            role: returnRole,
+                            content: fallbackOutput,
+                            name: nodeData?.label ? nodeData?.label.toLowerCase().replace(/\s/g, '_').trim() : nodeData?.id
+                        }
+                    ]
+                }
+            }
+
+            throw new Error(errorMessage)
         }
     }
 
