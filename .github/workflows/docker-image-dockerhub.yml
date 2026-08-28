@@ -1,13 +1,16 @@
 name: Docker Image CI - Docker Hub
 
 on:
+    push:
+        branches:
+            - main
     workflow_dispatch:
         inputs:
             node_version:
                 description: 'Node.js version to build this image with.'
                 type: choice
                 required: true
-                default: '24'
+                default: '20'
                 options:
                     - '20'
                     - '24'
@@ -27,14 +30,14 @@ jobs:
             node_version: ${{ steps.defaults.outputs.node_version }}
             tag_version: ${{ steps.defaults.outputs.tag_version }}
         steps:
-            - name: Set default values
+            - name: Set values
               id: defaults
               env:
                   NODE_VERSION_INPUT: ${{ github.event.inputs.node_version || '24' }}
                   TAG_VERSION_INPUT: ${{ github.event.inputs.tag_version || 'latest' }}
               run: |
-                  echo "node_version=${NODE_VERSION_INPUT}" >> $GITHUB_OUTPUT
-                  echo "tag_version=${TAG_VERSION_INPUT}" >> $GITHUB_OUTPUT
+                  echo "node_version=${{ github.event.inputs.node_version || '20' }}" >> $GITHUB_OUTPUT
+                  echo "tag_version=${{ github.event.inputs.tag_version || 'latest' }}" >> $GITHUB_OUTPUT
 
     build:
         needs: prepare
@@ -43,19 +46,19 @@ jobs:
             fail-fast: false
             matrix:
                 include:
-                    - image: flowiseai/flowise
-                      dockerfile: ./docker/Dockerfile
+                    - image: flatpaddy/flowise
+                      dockerfile: ./Dockerfile
                       platform: linux/amd64
                       runner: ubuntu-latest
-                    - image: flowiseai/flowise
-                      dockerfile: ./docker/Dockerfile
+                    - image: flatpaddy/flowise
+                      dockerfile: ./Dockerfile
                       platform: linux/arm64
                       runner: ubuntu-24.04-arm
-                    - image: flowiseai/flowise-worker
+                    - image: flatpaddy/flowise-worker
                       dockerfile: docker/worker/Dockerfile
                       platform: linux/amd64
                       runner: ubuntu-latest
-                    - image: flowiseai/flowise-worker
+                    - image: flatpaddy/flowise-worker
                       dockerfile: docker/worker/Dockerfile
                       platform: linux/arm64
                       runner: ubuntu-24.04-arm
@@ -111,8 +114,8 @@ jobs:
             fail-fast: false
             matrix:
                 image:
-                    - flowiseai/flowise
-                    - flowiseai/flowise-worker
+                    - flatpaddy/flowise
+                    - flatpaddy/flowise-worker
         steps:
             - name: Prepare env
               run: |

@@ -1,0 +1,70 @@
+diff --git a/dist/chat_models.cjs b/dist/chat_models.cjs
+index 1c94c23bb3429cd66bb0e4b4744bbe41a1dce45e..d1665f29815353f1277c72d82ba2fa2d8143cebc 100644
+--- a/dist/chat_models.cjs
++++ b/dist/chat_models.cjs
+@@ -5,6 +5,8 @@ const __langchain_core_utils_env = require_rolldown_runtime.__toESM(require("@la
+ const __langchain_openai = require_rolldown_runtime.__toESM(require("@langchain/openai"));
+ const __langchain_core_outputs = require_rolldown_runtime.__toESM(require("@langchain/core/outputs"));
+ 
++const NO_TOOL_CHOICE_MODELS = ["deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"];
++
+ //#region src/chat_models.ts
+ /**
+ * Deepseek chat model integration.
+@@ -607,9 +609,20 @@ var ChatDeepSeek = class extends __langchain_openai.ChatOpenAICompletions {
+ 	}
+ 	withStructuredOutput(outputSchema, config) {
+ 		const ensuredConfig = { ...config };
+-		if (ensuredConfig?.method === void 0) ensuredConfig.method = "functionCalling";
++		if (NO_TOOL_CHOICE_MODELS.includes(this.model)) {
++			if (ensuredConfig?.method === void 0 || ensuredConfig.method === "functionCalling") ensuredConfig.method = "jsonMode";
++		} else {
++			if (ensuredConfig?.method === void 0) ensuredConfig.method = "functionCalling";
++		}
+ 		return super.withStructuredOutput(outputSchema, ensuredConfig);
+ 	}
++	bindTools(tools, kwargs) {
++		if (NO_TOOL_CHOICE_MODELS.includes(this.model) && kwargs?.tool_choice !== void 0) {
++			const { tool_choice, ...rest } = kwargs;
++			return super.bindTools(tools, rest);
++		}
++		return super.bindTools(tools, kwargs);
++	}
+ };
+ 
+ //#endregion
+diff --git a/dist/chat_models.js b/dist/chat_models.js
+index 0be264aed89fc175398c7b2d9f865d9615757fd4..e32fd266422f7e10c3968a5eada90d5f27db5a71 100644
+--- a/dist/chat_models.js
++++ b/dist/chat_models.js
+@@ -4,6 +4,8 @@ import { getEnvironmentVariable } from "@langchain/core/utils/env";
+ import { ChatOpenAICompletions } from "@langchain/openai";
+ import { ChatGenerationChunk } from "@langchain/core/outputs";
+ 
++const NO_TOOL_CHOICE_MODELS = ["deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"];
++
+ //#region src/chat_models.ts
+ /**
+ * Deepseek chat model integration.
+@@ -606,9 +608,20 @@ var ChatDeepSeek = class extends ChatOpenAICompletions {
+ 	}
+ 	withStructuredOutput(outputSchema, config) {
+ 		const ensuredConfig = { ...config };
+-		if (ensuredConfig?.method === void 0) ensuredConfig.method = "functionCalling";
++		if (NO_TOOL_CHOICE_MODELS.includes(this.model)) {
++			if (ensuredConfig?.method === void 0 || ensuredConfig.method === "functionCalling") ensuredConfig.method = "jsonMode";
++		} else {
++			if (ensuredConfig?.method === void 0) ensuredConfig.method = "functionCalling";
++		}
+ 		return super.withStructuredOutput(outputSchema, ensuredConfig);
+ 	}
++	bindTools(tools, kwargs) {
++		if (NO_TOOL_CHOICE_MODELS.includes(this.model) && kwargs?.tool_choice !== void 0) {
++			const { tool_choice, ...rest } = kwargs;
++			return super.bindTools(tools, rest);
++		}
++		return super.bindTools(tools, kwargs);
++	}
+ };
+ 
+ //#endregion

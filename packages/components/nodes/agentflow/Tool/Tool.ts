@@ -275,7 +275,8 @@ class Tool_Agentflow implements INode {
             sessionId: options.sessionId,
             chatId: options.chatId,
             input: input,
-            state: options.agentflowRuntime?.state
+            state: options.agentflowRuntime?.state,
+            uploads: options.uploads
         }
 
         try {

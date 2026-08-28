@@ -113,7 +113,7 @@ class Agent_Agentflow implements INode {
     constructor() {
         this.label = 'Agent'
         this.name = 'agentAgentflow'
-        this.version = 3.2
+        this.version = 3.4
         this.type = 'Agent'
         this.category = 'Agent Flows'
         this.description = 'Dynamically choose and utilize tools during runtime, enabling multi-step reasoning'
@@ -396,6 +396,16 @@ class Agent_Agentflow implements INode {
                 }
             },
             {
+                label: 'Max Iterations',
+                name: 'agentMaxIterations',
+                type: 'number',
+                default: '10',
+                description:
+                    'Maximum number of tool-calling rounds the agent can perform per request. ' +
+                    'Prevents infinite loops when the LLM keeps requesting tools. Defaults to 10 if not set.',
+                optional: true
+            },
+            {
                 label: 'Max Token Limit',
                 name: 'agentMemoryMaxTokenLimit',
                 type: 'number',
@@ -432,6 +442,16 @@ class Agent_Agentflow implements INode {
                     }
                 ],
                 default: 'userMessage'
+            },
+            {
+                label: 'Fallback Output on Error',
+                name: 'agentFallbackOutput',
+                type: 'string',
+                rows: 4,
+                description:
+                    'If the agent fails, return this value as the node output instead of stopping the flow with an error. Set it to a variable such as the previous node output to pass it through unchanged.',
+                optional: true,
+                acceptVariable: true
             },
             {
                 label: 'JSON Structured Output',
@@ -893,6 +913,10 @@ class Agent_Agentflow implements INode {
             const _agentStructuredOutput = nodeData.inputs?.agentStructuredOutput
             const agentMessages = (nodeData.inputs?.agentMessages as unknown as ILLMMessage[]) ?? []
 
+            // Extract max iterations limit for tool-call rounds (default: 10)
+            const _agentMaxIterations = nodeData.inputs?.agentMaxIterations
+            const maxIterations = _agentMaxIterations ? parseInt(_agentMaxIterations as string, 10) : 10
+
             // Extract runtime state and history
             const state = options.agentflowRuntime?.state as ICommonObject
             const pastChatHistory = (options.pastChatHistory as BaseMessageLike[]) ?? []
@@ -1131,7 +1155,8 @@ class Agent_Agentflow implements INode {
                     isStreamable,
                     isLastNode,
                     iterationContext,
-                    isStructuredOutput
+                    isStructuredOutput,
+                    maxIterations
                 })
 
                 response = result.response
@@ -1207,7 +1232,9 @@ class Agent_Agentflow implements INode {
                     iterationContext,
                     isStructuredOutput,
                     accumulatedReasonContent: reasonContent,
-                    accumulatedReasoningDuration: thinkingDuration
+                    accumulatedReasoningDuration: thinkingDuration,
+                    maxIterations,
+                    iterationCount: 0
                 })
 
                 response = result.response
@@ -1388,13 +1415,19 @@ class Agent_Agentflow implements INode {
             if (isStructuredOutput) {
                 const structuredllmNodeInstance = configureStructuredOutput(llmWithoutToolsBind, _agentStructuredOutput)
                 const prompt = 'Convert the following response to the structured output format: ' + finalResponse
-                response = await structuredllmNodeInstance.invoke(prompt, { signal: abortController?.signal })
+                const structuredResponse = await structuredllmNodeInstance.invoke(prompt, { signal: abortController?.signal })
 
-                // Prefix the response with ```json and suffix with ``` to render as a code block
-                if (typeof response === 'object') {
-                    finalResponse = '```json\n' + JSON.stringify(response, null, 2) + '\n```'
+                if (structuredResponse == null) {
+                    // Model did not call the structured output function; fall back to the unstructured response
+                    response = new AIMessageChunk(finalResponse)
                 } else {
-                    finalResponse = response
+                    response = structuredResponse
+                    // Prefix the response with ```json and suffix with ``` to render as a code block
+                    if (typeof structuredResponse === 'object') {
+                        finalResponse = '```json\n' + JSON.stringify(structuredResponse, null, 2) + '\n```'
+                    } else {
+                        finalResponse = structuredResponse
+                    }
                 }
 
                 if (isLastNode && sseStreamer) {
@@ -1543,7 +1576,38 @@ class Agent_Agentflow implements INode {
             if (error instanceof Error && error.message === 'Aborted') {
                 throw error
             }
-            throw new Error(`Error in Agent node: ${error instanceof Error ? error.message : String(error)}`)
+
+            const errorMessage = `Error in Agent node: ${error instanceof Error ? error.message : String(error)}`
+
+            // Fail open: return the configured fallback output instead of stopping the flow
+            const fallbackOutput = nodeData.inputs?.agentFallbackOutput
+            if (fallbackOutput && typeof fallbackOutput === 'string') {
+                if (options.isLastNode && options.sseStreamer) {
+                    const sseStreamer = options.sseStreamer as IServerSideEventStreamer
+                    sseStreamer.streamTokenEvent(options.chatId, fallbackOutput)
+                }
+
+                const returnRole = nodeData.inputs?.agentReturnResponseAs === 'assistantMessage' ? 'assistant' : 'user'
+                return {
+                    id: nodeData.id,
+                    name: this.name,
+                    input: nodeData.inputs,
+                    output: {
+                        content: fallbackOutput,
+                        error: errorMessage
+                    },
+                    state: options.agentflowRuntime?.state ?? {},
+                    chatHistory: [
+                        {
+                            role: returnRole,
+                            content: fallbackOutput,
+                            name: nodeData?.label ? nodeData?.label.toLowerCase().replace(/\s/g, '_').trim() : nodeData?.id
+                        }
+                    ]
+                }
+            }
+
+            throw new Error(errorMessage)
         }
     }
 
@@ -2150,7 +2214,9 @@ class Agent_Agentflow implements INode {
         iterationContext,
         isStructuredOutput = false,
         accumulatedReasonContent: initialAccumulatedReasonContent,
-        accumulatedReasoningDuration: initialAccumulatedReasoningDuration
+        accumulatedReasoningDuration: initialAccumulatedReasoningDuration,
+        maxIterations = 10,
+        iterationCount = 0
     }: {
         response: AIMessageChunk
         messages: BaseMessageLike[]
@@ -2167,6 +2233,8 @@ class Agent_Agentflow implements INode {
         isStructuredOutput?: boolean
         accumulatedReasonContent?: string
         accumulatedReasoningDuration?: number
+        maxIterations?: number
+        iterationCount?: number
     }): Promise<{
         response: AIMessageChunk
         usedTools: IUsedTool[]
@@ -2186,6 +2254,19 @@ class Agent_Agentflow implements INode {
         // Use reasoning from caller (first turn); subsequent turns are added when we get newResponse
         let accumulatedReasonContent = initialAccumulatedReasonContent ?? ''
         let accumulatedReasoningDuration = initialAccumulatedReasoningDuration ?? 0
+
+        // Enforce max iterations limit to prevent unbounded tool-call loops
+        if (iterationCount >= maxIterations) {
+            return {
+                response: new AIMessageChunk('Agent stopped due to iteration limit or time limit.'),
+                usedTools,
+                sourceDocuments,
+                artifacts,
+                totalTokens,
+                accumulatedReasonContent: accumulatedReasonContent || undefined,
+                accumulatedReasoningDuration: accumulatedReasoningDuration || undefined
+            }
+        }
 
         if (!response.tool_calls || response.tool_calls.length === 0) {
             return {
@@ -2461,7 +2542,9 @@ class Agent_Agentflow implements INode {
                 iterationContext,
                 isStructuredOutput,
                 accumulatedReasonContent,
-                accumulatedReasoningDuration
+                accumulatedReasoningDuration,
+                maxIterations,
+                iterationCount: iterationCount + 1
             })
 
             // Merge results from recursive tool calls
@@ -2508,7 +2591,8 @@ class Agent_Agentflow implements INode {
         isStreamable,
         isLastNode,
         iterationContext,
-        isStructuredOutput = false
+        isStructuredOutput = false,
+        maxIterations = 10
     }: {
         humanInput: IHumanInput
         humanInputAction: Record<string, any> | undefined
@@ -2524,6 +2608,7 @@ class Agent_Agentflow implements INode {
         isLastNode: boolean
         iterationContext: ICommonObject
         isStructuredOutput?: boolean
+        maxIterations?: number
     }): Promise<{
         response: AIMessageChunk
         usedTools: IUsedTool[]
@@ -2840,7 +2925,9 @@ class Agent_Agentflow implements INode {
                 iterationContext,
                 isStructuredOutput,
                 accumulatedReasonContent,
-                accumulatedReasoningDuration
+                accumulatedReasoningDuration,
+                maxIterations,
+                iterationCount: 1
             })
 
             // Merge results from recursive tool calls
