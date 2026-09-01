@@ -63,10 +63,10 @@ index 7a7adf58a6f21e12494ece593c00255604cc60b2..21b23b4718491d083b201fc34ea7eb30
  			const audioMessage = {
  				role: "assistant",
 diff --git a/dist/converters/responses.cjs b/dist/converters/responses.cjs
-index 8e4544d..9c5f87b 100644
+index 33efbf5652bac3048bf138027b52da7c4896df18..54853972b3ab6ea5c100d416d57babf8c92a7623 100644
 --- a/dist/converters/responses.cjs
 +++ b/dist/converters/responses.cjs
-@@ -912,13 +912,25 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
+@@ -909,13 +909,12 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
  					refusal: additional_kwargs.refusal
  				}];
  			}
@@ -83,14 +83,14 @@ index 8e4544d..9c5f87b 100644
 +				}
 +				if (Array.isArray(content) && content.length > 0) {
 +					const flat = content.flatMap((item) => {
-+						if (item.type === "text") return {
-+							type: "output_text",
-+							text: item.text,
-+							annotations: item.annotations ?? []
-+						};
-+						if (item.type === "output_text" || item.type === "refusal") return item;
-+						return [];
-+					});
+ 						if (item.type === "text") return {
+ 							type: "output_text",
+ 							text: item.text,
+@@ -924,7 +923,15 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
+ 						if (item.type === "output_text" || item.type === "refusal") return item;
+ 						return [];
+ 					});
+-				})
 +					return flat.length > 0 ? flat : undefined;
 +				}
 +				return undefined;
@@ -100,12 +100,14 @@ index 8e4544d..9c5f87b 100644
 +				role: "assistant",
 +				...lcMsg.id && !zdrEnabled && lcMsg.id.startsWith("msg_") ? { id: lcMsg.id } : {},
 +				content: formattedContent
-+			});
+ 			});
+ 			const functionCallIds = additional_kwargs?.[_FUNCTION_CALL_IDS_MAP_KEY];
+ 			if (__langchain_core_messages.AIMessage.isInstance(lcMsg) && !!lcMsg.tool_calls?.length) input.push(...lcMsg.tool_calls.map((toolCall) => {
 diff --git a/dist/converters/responses.js b/dist/converters/responses.js
-index 9d722bf..1f4a92c 100644
+index 8dc68d3e3b4fa9518604cd006bda3aff7762b228..81491ff056d1a97f72e0552fd71c6f2e02d3bcaf 100644
 --- a/dist/converters/responses.js
 +++ b/dist/converters/responses.js
-@@ -911,13 +911,25 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
+@@ -908,13 +908,12 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
  					refusal: additional_kwargs.refusal
  				}];
  			}
@@ -122,14 +124,14 @@ index 9d722bf..1f4a92c 100644
 +				}
 +				if (Array.isArray(content) && content.length > 0) {
 +					const flat = content.flatMap((item) => {
-+						if (item.type === "text") return {
-+							type: "output_text",
-+							text: item.text,
-+							annotations: item.annotations ?? []
-+						};
-+						if (item.type === "output_text" || item.type === "refusal") return item;
-+						return [];
-+					});
+ 						if (item.type === "text") return {
+ 							type: "output_text",
+ 							text: item.text,
+@@ -923,7 +922,15 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
+ 						if (item.type === "output_text" || item.type === "refusal") return item;
+ 						return [];
+ 					});
+-				})
 +					return flat.length > 0 ? flat : undefined;
 +				}
 +				return undefined;
@@ -139,4 +141,6 @@ index 9d722bf..1f4a92c 100644
 +				role: "assistant",
 +				...lcMsg.id && !zdrEnabled && lcMsg.id.startsWith("msg_") ? { id: lcMsg.id } : {},
 +				content: formattedContent
-+			});
+ 			});
+ 			const functionCallIds = additional_kwargs?.[_FUNCTION_CALL_IDS_MAP_KEY];
+ 			if (AIMessage.isInstance(lcMsg) && !!lcMsg.tool_calls?.length) input.push(...lcMsg.tool_calls.map((toolCall) => {
