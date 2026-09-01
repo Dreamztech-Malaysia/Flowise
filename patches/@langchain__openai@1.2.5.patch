@@ -62,3 +62,81 @@ index 7a7adf58a6f21e12494ece593c00255604cc60b2..21b23b4718491d083b201fc34ea7eb30
  		if (message.additional_kwargs.audio && typeof message.additional_kwargs.audio === "object" && "id" in message.additional_kwargs.audio) {
  			const audioMessage = {
  				role: "assistant",
+diff --git a/dist/converters/responses.cjs b/dist/converters/responses.cjs
+index 8e4544d..9c5f87b 100644
+--- a/dist/converters/responses.cjs
++++ b/dist/converters/responses.cjs
+@@ -912,13 +912,25 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
+ 					refusal: additional_kwargs.refusal
+ 				}];
+ 			}
+-			if (typeof content === "string" || content.length > 0) input.push({
+-				type: "message",
+-				role: "assistant",
+-				...lcMsg.id && !zdrEnabled && lcMsg.id.startsWith("msg_") ? { id: lcMsg.id } : {},
+-				content: require_misc.iife(() => {
+-					if (typeof content === "string") return content;
+-					return content.flatMap((item) => {
++			const formattedContent = require_misc.iife(() => {
++				if (typeof content === "string") {
++					return content.length > 0 ? content : undefined;
++				}
++				if (Array.isArray(content) && content.length > 0) {
++					const flat = content.flatMap((item) => {
++						if (item.type === "text") return {
++							type: "output_text",
++							text: item.text,
++							annotations: item.annotations ?? []
++						};
++						if (item.type === "output_text" || item.type === "refusal") return item;
++						return [];
++					});
++					return flat.length > 0 ? flat : undefined;
++				}
++				return undefined;
++			});
++			if (formattedContent != null) input.push({
++				type: "message",
++				role: "assistant",
++				...lcMsg.id && !zdrEnabled && lcMsg.id.startsWith("msg_") ? { id: lcMsg.id } : {},
++				content: formattedContent
++			});
+diff --git a/dist/converters/responses.js b/dist/converters/responses.js
+index 9d722bf..1f4a92c 100644
+--- a/dist/converters/responses.js
++++ b/dist/converters/responses.js
+@@ -911,13 +911,25 @@ const convertMessagesToResponsesInput = ({ messages, zdrEnabled, model }) => {
+ 					refusal: additional_kwargs.refusal
+ 				}];
+ 			}
+-			if (typeof content === "string" || content.length > 0) input.push({
+-				type: "message",
+-				role: "assistant",
+-				...lcMsg.id && !zdrEnabled && lcMsg.id.startsWith("msg_") ? { id: lcMsg.id } : {},
+-				content: iife(() => {
+-					if (typeof content === "string") return content;
+-					return content.flatMap((item) => {
++			const formattedContent = iife(() => {
++				if (typeof content === "string") {
++					return content.length > 0 ? content : undefined;
++				}
++				if (Array.isArray(content) && content.length > 0) {
++					const flat = content.flatMap((item) => {
++						if (item.type === "text") return {
++							type: "output_text",
++							text: item.text,
++							annotations: item.annotations ?? []
++						};
++						if (item.type === "output_text" || item.type === "refusal") return item;
++						return [];
++					});
++					return flat.length > 0 ? flat : undefined;
++				}
++				return undefined;
++			});
++			if (formattedContent != null) input.push({
++				type: "message",
++				role: "assistant",
++				...lcMsg.id && !zdrEnabled && lcMsg.id.startsWith("msg_") ? { id: lcMsg.id } : {},
++				content: formattedContent
++			});

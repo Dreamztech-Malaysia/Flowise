@@ -12,7 +12,7 @@ import {
     IUsedTool
 } from '../../../src/Interface'
 import { ContentBlock } from 'langchain'
-import { AIMessageChunk, BaseMessageLike } from '@langchain/core/messages'
+import { AIMessageChunk, BaseMessageLike, ToolMessage } from '@langchain/core/messages'
 import { AnalyticHandler } from '../../../src/handler'
 import { DEFAULT_SUMMARIZER_TEMPLATE } from '../prompt'
 import { ILLMMessage, IResponseMetadata } from '../Interface.Agentflow'
@@ -2398,16 +2398,17 @@ class Agent_Agentflow implements INode {
                     }
 
                     // Add tool message to conversation
-                    messages.push({
-                        role: 'tool',
-                        content: toolOutput,
-                        tool_call_id: toolCall.id,
-                        name: toolCall.name,
-                        additional_kwargs: {
-                            artifacts: parsedArtifacts,
-                            sourceDocuments: parsedDocs
-                        }
-                    })
+                    messages.push(
+                        new ToolMessage({
+                            content: toolOutput,
+                            tool_call_id: toolCall.id ?? '',
+                            name: toolCall.name,
+                            additional_kwargs: {
+                                artifacts: parsedArtifacts,
+                                sourceDocuments: parsedDocs
+                            }
+                        })
+                    )
 
                     // Track used tools
                     usedTools.push({
@@ -2774,16 +2775,17 @@ class Agent_Agentflow implements INode {
                         }
 
                         // Add tool message to conversation
-                        messages.push({
-                            role: 'tool',
-                            content: toolOutput,
-                            tool_call_id: toolCall.id,
-                            name: toolCall.name,
-                            additional_kwargs: {
-                                artifacts: parsedArtifacts,
-                                sourceDocuments: parsedDocs
-                            }
-                        })
+                        messages.push(
+                            new ToolMessage({
+                                content: toolOutput,
+                                tool_call_id: toolCall.id ?? '',
+                                name: toolCall.name,
+                                additional_kwargs: {
+                                    artifacts: parsedArtifacts,
+                                    sourceDocuments: parsedDocs
+                                }
+                            })
+                        )
 
                         // Track used tools
                         usedTools.push({
