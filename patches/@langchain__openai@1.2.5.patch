@@ -144,3 +144,43 @@ index 8dc68d3e3b4fa9518604cd006bda3aff7762b228..81491ff056d1a97f72e0552fd71c6f2e
  			});
  			const functionCallIds = additional_kwargs?.[_FUNCTION_CALL_IDS_MAP_KEY];
  			if (AIMessage.isInstance(lcMsg) && !!lcMsg.tool_calls?.length) input.push(...lcMsg.tool_calls.map((toolCall) => {
+diff --git a/dist/utils/misc.cjs b/dist/utils/misc.cjs
+index e64deaa9356a6d44b66a11613a222c96fdb75398..eb1ff8c2db823362b0801f19f46e044433a9218b 100644
+--- a/dist/utils/misc.cjs
++++ b/dist/utils/misc.cjs
+@@ -7,6 +7,7 @@ function isReasoningModel(model) {
+ 	if (!model) return false;
+ 	if (/^o\d/.test(model ?? "")) return true;
+ 	if (model.startsWith("gpt-5") && !model.startsWith("gpt-5-chat")) return true;
++	if (/^gpt-[6-9]/i.test(model) && !model.includes("-chat")) return true;
+ 	return false;
+ }
+ function extractGenericMessageCustomRole(message) {
+@@ -36,6 +37,7 @@ function messageToOpenAIRole(message) {
+ 	}
+ }
+ function _modelPrefersResponsesAPI(model) {
++	if (/^gpt-[6-9]/i.test(model) || model.includes("gpt-6")) return true;
+ 	if (model.includes("gpt-5.2-pro")) return true;
+ 	if (model.includes("codex")) return true;
+ 	return false;
+diff --git a/dist/utils/misc.js b/dist/utils/misc.js
+index fefa06955c502b4fc47690823152d12e23d21db2..d08fcc12854969570c0ab1c53a467a30e4f21e0b 100644
+--- a/dist/utils/misc.js
++++ b/dist/utils/misc.js
+@@ -6,6 +6,7 @@ function isReasoningModel(model) {
+ 	if (!model) return false;
+ 	if (/^o\d/.test(model ?? "")) return true;
+ 	if (model.startsWith("gpt-5") && !model.startsWith("gpt-5-chat")) return true;
++	if (/^gpt-[6-9]/i.test(model) && !model.includes("-chat")) return true;
+ 	return false;
+ }
+ function extractGenericMessageCustomRole(message) {
+@@ -35,6 +36,7 @@ function messageToOpenAIRole(message) {
+ 	}
+ }
+ function _modelPrefersResponsesAPI(model) {
++	if (/^gpt-[6-9]/i.test(model) || model.includes("gpt-6")) return true;
+ 	if (model.includes("gpt-5.2-pro")) return true;
+ 	if (model.includes("codex")) return true;
+ 	return false;
