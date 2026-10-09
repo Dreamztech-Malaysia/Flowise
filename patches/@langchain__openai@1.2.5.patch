@@ -145,42 +145,66 @@ index 8dc68d3e3b4fa9518604cd006bda3aff7762b228..81491ff056d1a97f72e0552fd71c6f2e
  			const functionCallIds = additional_kwargs?.[_FUNCTION_CALL_IDS_MAP_KEY];
  			if (AIMessage.isInstance(lcMsg) && !!lcMsg.tool_calls?.length) input.push(...lcMsg.tool_calls.map((toolCall) => {
 diff --git a/dist/utils/misc.cjs b/dist/utils/misc.cjs
-index e64deaa9356a6d44b66a11613a222c96fdb75398..eb1ff8c2db823362b0801f19f46e044433a9218b 100644
+index e64deaa9356a6d44b66a11613a222c96fdb75398..3aa73c38aa92b301e854625bec151ff2c1c34548 100644
 --- a/dist/utils/misc.cjs
 +++ b/dist/utils/misc.cjs
-@@ -7,6 +7,7 @@ function isReasoningModel(model) {
+@@ -5,8 +5,11 @@ const __langchain_core_messages = require_rolldown_runtime.__toESM(require("@lan
+ const iife = (fn) => fn();
+ function isReasoningModel(model) {
  	if (!model) return false;
- 	if (/^o\d/.test(model ?? "")) return true;
- 	if (model.startsWith("gpt-5") && !model.startsWith("gpt-5-chat")) return true;
-+	if (/^gpt-[6-9]/i.test(model) && !model.includes("-chat")) return true;
+-	if (/^o\d/.test(model ?? "")) return true;
+-	if (model.startsWith("gpt-5") && !model.startsWith("gpt-5-chat")) return true;
++	const lowerName = model.toLowerCase().trim();
++	if (lowerName.includes("-chat")) return false;
++	if (/^o[1-9]/.test(lowerName)) return true;
++	if (lowerName === "codex-mini") return true;
++	if (/gpt[- ]?[5-9]/i.test(lowerName)) return true;
  	return false;
  }
  function extractGenericMessageCustomRole(message) {
-@@ -36,6 +37,7 @@ function messageToOpenAIRole(message) {
+@@ -36,8 +39,11 @@ function messageToOpenAIRole(message) {
  	}
  }
  function _modelPrefersResponsesAPI(model) {
-+	if (/^gpt-[6-9]/i.test(model) || model.includes("gpt-6")) return true;
- 	if (model.includes("gpt-5.2-pro")) return true;
- 	if (model.includes("codex")) return true;
+-	if (model.includes("gpt-5.2-pro")) return true;
+-	if (model.includes("codex")) return true;
++	if (!model) return false;
++	const lowerName = model.toLowerCase().trim();
++	if (/gpt[- ]?[6-9]/i.test(lowerName)) return true;
++	if (lowerName.includes("gpt-5.2-pro")) return true;
++	if (lowerName.includes("codex")) return true;
  	return false;
+ }
+ 
 diff --git a/dist/utils/misc.js b/dist/utils/misc.js
-index fefa06955c502b4fc47690823152d12e23d21db2..d08fcc12854969570c0ab1c53a467a30e4f21e0b 100644
+index fefa06955c502b4fc47690823152d12e23d21db2..288a7d9155da162e6287dc42b9bbe7e9701e924c 100644
 --- a/dist/utils/misc.js
 +++ b/dist/utils/misc.js
-@@ -6,6 +6,7 @@ function isReasoningModel(model) {
+@@ -4,8 +4,11 @@ import { ChatMessage } from "@langchain/core/messages";
+ const iife$1 = (fn) => fn();
+ function isReasoningModel(model) {
  	if (!model) return false;
- 	if (/^o\d/.test(model ?? "")) return true;
- 	if (model.startsWith("gpt-5") && !model.startsWith("gpt-5-chat")) return true;
-+	if (/^gpt-[6-9]/i.test(model) && !model.includes("-chat")) return true;
+-	if (/^o\d/.test(model ?? "")) return true;
+-	if (model.startsWith("gpt-5") && !model.startsWith("gpt-5-chat")) return true;
++	const lowerName = model.toLowerCase().trim();
++	if (lowerName.includes("-chat")) return false;
++	if (/^o[1-9]/.test(lowerName)) return true;
++	if (lowerName === "codex-mini") return true;
++	if (/gpt[- ]?[5-9]/i.test(lowerName)) return true;
  	return false;
  }
  function extractGenericMessageCustomRole(message) {
-@@ -35,6 +36,7 @@ function messageToOpenAIRole(message) {
+@@ -35,8 +38,11 @@ function messageToOpenAIRole(message) {
  	}
  }
  function _modelPrefersResponsesAPI(model) {
-+	if (/^gpt-[6-9]/i.test(model) || model.includes("gpt-6")) return true;
- 	if (model.includes("gpt-5.2-pro")) return true;
- 	if (model.includes("codex")) return true;
+-	if (model.includes("gpt-5.2-pro")) return true;
+-	if (model.includes("codex")) return true;
++	if (!model) return false;
++	const lowerName = model.toLowerCase().trim();
++	if (/gpt[- ]?[6-9]/i.test(lowerName)) return true;
++	if (lowerName.includes("gpt-5.2-pro")) return true;
++	if (lowerName.includes("codex")) return true;
  	return false;
+ }
+ 

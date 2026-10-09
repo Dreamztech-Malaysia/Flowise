@@ -3,7 +3,8 @@ import {
     convertRequireToImport,
     COMMONJS_REQUIRE_REGEX,
     IMPORT_EXTRACTION_REGEX,
-    executeJavaScriptCode
+    executeJavaScriptCode,
+    isReasoningModelOpenAI
 } from './utils'
 
 describe('removeInvalidImageMarkdown', () => {
@@ -286,4 +287,40 @@ describe('NodeVM sandbox — availableDependencies allowlist', () => {
         const result = await executeJavaScriptCode(`const { Client } = require('pg'); return typeof Client`, {}, { timeout: 10000 })
         expect(result).toBe('function')
     }, 15000)
+})
+
+describe('isReasoningModelOpenAI', () => {
+    it('returns true for gpt-6 completions/reasoning models', () => {
+        expect(isReasoningModelOpenAI('gpt-6')).toBe(true)
+        expect(isReasoningModelOpenAI('gpt-6-mini')).toBe(true)
+        expect(isReasoningModelOpenAI('gpt-6-sol')).toBe(true)
+        expect(isReasoningModelOpenAI('gpt-6.1-sol')).toBe(true)
+    })
+
+    it('returns false for chat endpoint models', () => {
+        // Your custom chat models
+        expect(isReasoningModelOpenAI('gpt-6-chat')).toBe(false)
+        expect(isReasoningModelOpenAI('gpt-5-chat')).toBe(false)
+
+        // OpenAI standard chat models
+        expect(isReasoningModelOpenAI('gpt-4o')).toBe(false)
+        expect(isReasoningModelOpenAI('gpt-4o-mini')).toBe(false)
+        expect(isReasoningModelOpenAI('gpt-4-turbo')).toBe(false)
+    })
+
+    it('returns true for o-series and other completions models', () => {
+        // o-series reasoning models
+        expect(isReasoningModelOpenAI('o1')).toBe(true)
+        expect(isReasoningModelOpenAI('o1-mini')).toBe(true)
+        expect(isReasoningModelOpenAI('o3-mini')).toBe(true)
+
+        // Codex and standard OpenAI completion endpoint models
+        expect(isReasoningModelOpenAI('codex-mini')).toBe(true)
+    })
+
+    it('handles empty or invalid inputs', () => {
+        expect(isReasoningModelOpenAI('')).toBe(false)
+        expect(isReasoningModelOpenAI(null as any)).toBe(false)
+        expect(isReasoningModelOpenAI(undefined as any)).toBe(false)
+    })
 })
