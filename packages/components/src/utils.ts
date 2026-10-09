@@ -2305,7 +2305,7 @@ export const isReasoningModelOpenAI = (name: string): boolean => {
     if (lowerName.includes('-chat')) return false
     if (/^o[1-9]/.test(lowerName)) return true
     if (lowerName === 'codex-mini') return true
-    if (/gpt[- ]?[5-9]/i.test(lowerName)) return true
+    if (/^gpt-[5-9]/.test(lowerName)) return true
     return false
 }
 
