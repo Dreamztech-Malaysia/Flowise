@@ -2300,10 +2300,12 @@ export const extractResponseContent = (response: any): string => {
 }
 
 export const isReasoningModelOpenAI = (name: string): boolean => {
-    if (/^o[134]/.test(name)) return true
-    if (name === 'codex-mini') return true
-    if (name.includes('gpt-5') && name.includes('-chat')) return false
-    if (name.includes('gpt-5')) return true
+    if (!name) return false
+    const lowerName = name.toLowerCase().trim()
+    if (lowerName.includes('-chat')) return false
+    if (/^o[1-9]/.test(lowerName)) return true
+    if (lowerName === 'codex-mini') return true
+    if (/^gpt-[5-9]/.test(lowerName)) return true
     return false
 }
 
