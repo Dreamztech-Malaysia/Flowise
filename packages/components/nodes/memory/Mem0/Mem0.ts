@@ -7,6 +7,7 @@ import { IMessage, INode, INodeData, INodeParams, MemoryMethods, MessageType } f
 import { getBaseClasses, getCredentialData, getCredentialParam, mapChatMessageToBaseMessage } from '../../../src/utils'
 import { DataSource } from 'typeorm'
 import { v4 as uuidv4 } from 'uuid'
+import { SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
 
 interface BufferMemoryExtendedInput {
     sessionId: string
@@ -36,7 +37,7 @@ class Mem0_Memory implements INode {
     constructor() {
         this.label = 'Mem0'
         this.name = 'mem0'
-        this.version = 1.1
+        this.version = 1.2
         this.type = 'Mem0'
         this.icon = 'mem0.svg'
         this.category = 'Memory'
@@ -46,11 +47,67 @@ class Mem0_Memory implements INode {
             label: 'Connect Credential',
             name: 'credential',
             type: 'credential',
-            optional: false,
-            description: 'Configure API Key for Mem0 service',
+            // Optional so the self-hosted mode can be saved without a mem0 Platform key; platform mode still requires it at runtime.
+            optional: true,
+            description: 'Configure API Key for Mem0 service (Platform mode only)',
             credentialNames: ['mem0MemoryApi']
         }
         this.inputs = [
+            {
+                label: 'Mode',
+                name: 'mode',
+                type: 'options',
+                description:
+                    'Platform: mem0 Platform API with the connected credential. Self-hosted: mem0 OSS + Qdrant (QDRANT_URL), LLM/embedder key taken from overrideConfig.customerMemory per request.',
+                options: [
+                    { label: 'Platform', name: 'platform', description: 'mem0 Platform API (default, original behaviour)' },
+                    { label: 'Self-hosted', name: 'selfHosted', description: 'mem0 OSS + Qdrant, caller-supplied AI key' }
+                ],
+                default: 'platform',
+                optional: true
+            },
+            {
+                label: 'Customer Memory Config',
+                name: 'customerMemory',
+                type: 'json',
+                description:
+                    'Self-hosted only. Normally sent per request as overrideConfig.customerMemory (enable "customerMemory" for this node under Chatflow Configuration > Security > Override Configuration). Missing/disabled/empty apiKey = plain chat history, no mem0 calls.',
+                placeholder:
+                    '{"enabled": true, "userId": "12:60123456789", "ownerId": 12, "apiKey": "", "baseUrl": "https://api.openai.com/v1", "llmModel": "gpt-4.1-mini", "embeddingModel": "text-embedding-3-small", "backfill": true}',
+                optional: true,
+                additionalParams: true,
+                show: { mode: 'selfHosted' }
+            },
+            {
+                label: 'Recall Limit',
+                name: 'recallLimit',
+                type: 'number',
+                description: 'Self-hosted only. Max facts injected into the prompt.',
+                default: 15,
+                optional: true,
+                additionalParams: true,
+                show: { mode: 'selfHosted' }
+            },
+            {
+                label: 'History Window',
+                name: 'historyWindow',
+                type: 'number',
+                description: 'Self-hosted only. Number of recent chat messages (from Flowise chat history) passed to the model.',
+                default: 10,
+                optional: true,
+                additionalParams: true,
+                show: { mode: 'selfHosted' }
+            },
+            {
+                label: 'Backfill Messages',
+                name: 'backfillMessages',
+                type: 'number',
+                description: 'Self-hosted only. When backfill=true and the customer has no memories yet, how many past session messages to feed on the first add().',
+                default: 50,
+                optional: true,
+                additionalParams: true,
+                show: { mode: 'selfHosted' }
+            },
             {
                 label: 'User ID',
                 name: 'user_id',
@@ -150,8 +207,35 @@ class Mem0_Memory implements INode {
     }
 
     async init(nodeData: INodeData, input: string, options: ICommonObject): Promise<any> {
+        if ((nodeData.inputs?.mode as string) === 'selfHosted') {
+            return initializeSelfHosted(nodeData, input, options)
+        }
         return await initializeMem0(nodeData, input, options)
     }
+}
+
+const toPositiveInt = (v: unknown, d: number, max: number): number => {
+    const n = Math.floor(Number(v))
+    return Number.isFinite(n) && n > 0 ? Math.min(n, max) : d
+}
+
+const initializeSelfHosted = (nodeData: INodeData, input: string, options: ICommonObject): SelfHostedCustomerMemory => {
+    return new SelfHostedCustomerMemory({
+        rawCustomerMemory: nodeData.inputs?.customerMemory,
+        sessionId: (options.sessionId as string) || (options.chatId as string) || '',
+        appDataSource: options.appDataSource as DataSource,
+        databaseEntities: options.databaseEntities as IDatabaseEntity,
+        chatflowid: options.chatflowid as string,
+        orgId: options.orgId as string,
+        input,
+        searchOnly: (nodeData.inputs?.searchOnly as boolean) || false,
+        recallLimit: toPositiveInt(nodeData.inputs?.recallLimit, 15, 50),
+        historyWindow: toPositiveInt(nodeData.inputs?.historyWindow, 10, 200),
+        backfillMessages: toPositiveInt(nodeData.inputs?.backfillMessages, 50, 200),
+        memoryKey: (nodeData.inputs?.memoryKey as string) || 'history',
+        inputKey: (nodeData.inputs?.inputKey as string) || 'input',
+        logger: options.logger
+    })
 }
 
 const initializeMem0 = async (nodeData: INodeData, input: string, options: ICommonObject): Promise<BaseMem0Memory> => {
@@ -165,6 +249,9 @@ const initializeMem0 = async (nodeData: INodeData, input: string, options: IComm
 
     const credentialData = await getCredentialData(nodeData.credential ?? '', options)
     const apiKey = getCredentialParam('apiKey', credentialData, nodeData)
+    if (!apiKey) {
+        throw new Error('Mem0 (Platform mode): connect a Mem0 API credential.')
+    }
 
     const mem0Options: ClientOptions = {
         apiKey: apiKey,
