@@ -9,6 +9,8 @@ const DELETE = 'chatflows:delete,agentflows:delete'
 
 // READ
 router.get('/', checkAnyPermission(VIEW), customerMemoryController.listUsers)
+// must stay above '/:userId' so 'summary' is not taken as a user id
+router.get('/summary', checkAnyPermission(VIEW), customerMemoryController.getSummary)
 router.get('/:userId', checkAnyPermission(VIEW), customerMemoryController.getFacts)
 
 // DELETE

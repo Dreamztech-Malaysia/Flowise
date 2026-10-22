@@ -19,7 +19,24 @@ export interface CustomerMemoryFact {
     user_id: string | null
     owner_id: number | string | null
     category: string | null
+    label: string | null
     metadata: Record<string, any>
+}
+
+export interface CustomerMemoryFactsResult {
+    facts: CustomerMemoryFact[]
+    summary: string | null
+    summaryUpdatedAt: string | null
+}
+
+export interface CustomerMemorySummaryRow {
+    userId: string
+    salesmanId: string | null
+    category: string
+    label: string
+    /** Monday (UTC) of the ISO week the fact was created, YYYY-MM-DD */
+    week: string
+    count: number
 }
 
 export interface CustomerMemoryUser {
@@ -29,11 +46,13 @@ export interface CustomerMemoryUser {
     lastUpdatedAt: string | null
 }
 
-const INTERNAL_KEYS = new Set(['data', 'hash', 'createdAt', 'updatedAt', 'textLemmatized', 'user_id', 'owner_id', 'category'])
+const INTERNAL_KEYS = new Set(['data', 'hash', 'createdAt', 'updatedAt', 'textLemmatized', 'user_id', 'owner_id', 'category', 'label'])
 const PAGE = 256
 const MAX_POINTS = 100_000
 
 export const getCollectionName = () => process.env.CUSTOMER_MEMORY_COLLECTION || 'customer_memory'
+/** Written by the Mem0 node: one point per customer with payload { user_id, summary, updatedAt, owner_id?, salesmanId? }. */
+export const getSummaryCollectionName = () => `${getCollectionName()}_summaries`
 
 const getQdrantConfig = () => {
     const url = process.env.QDRANT_URL
@@ -109,6 +128,7 @@ export const toFact = (point: any): CustomerMemoryFact => {
         user_id: p.user_id ?? null,
         owner_id: p.owner_id ?? null,
         category: p.category ?? (Array.isArray(p.categories) ? p.categories[0] ?? null : null),
+        label: typeof p.label === 'string' ? p.label : null,
         metadata
     }
 }
@@ -119,10 +139,72 @@ const validateUserId = (userId: string) => {
     }
 }
 
-const getFacts = async (userId: string): Promise<CustomerMemoryFact[]> => {
+const getFacts = async (userId: string): Promise<CustomerMemoryFactsResult> => {
     validateUserId(userId)
-    const points = await scrollAll(userFilter(userId))
-    return points.map(toFact).sort((a, b) => (b.updated_at ?? b.created_at ?? '').localeCompare(a.updated_at ?? a.created_at ?? ''))
+    const [points, summaryPoints] = await Promise.all([
+        scrollAll(userFilter(userId)),
+        qdrant(
+            'POST',
+            `${collectionPath(getSummaryCollectionName())}/points/scroll`,
+            { filter: userFilter(userId), limit: 1, with_payload: ['summary', 'updatedAt'], with_vector: false },
+            true
+        )
+    ])
+    const facts = points
+        .map(toFact)
+        .sort((a, b) => (b.updated_at ?? b.created_at ?? '').localeCompare(a.updated_at ?? a.created_at ?? ''))
+    const sp = summaryPoints?.points?.[0]?.payload ?? {}
+    return {
+        facts,
+        summary: typeof sp.summary === 'string' ? sp.summary : null,
+        summaryUpdatedAt: toIso(sp.updatedAt)
+    }
+}
+
+/** Monday (UTC) of the ISO week containing `iso`, as YYYY-MM-DD. */
+export const weekStart = (iso: string): string => {
+    const d = new Date(iso)
+    const day = (d.getUTCDay() + 6) % 7 // Mon=0
+    const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day))
+    return m.toISOString().slice(0, 10)
+}
+
+/**
+ * Counts facts per (userId, salesmanId, category, label, week). Pure Qdrant scroll + counting, no AI.
+ * Untagged (pre-tagging) facts count as category 'other' / label 'Other'.
+ */
+const getSummary = async (ownerId?: string, since?: string): Promise<CustomerMemorySummaryRow[]> => {
+    let sinceTs: number | undefined
+    if (since) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'since must be YYYY-MM-DD')
+        sinceTs = new Date(`${since}T00:00:00.000Z`).getTime()
+        if (isNaN(sinceTs)) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'since must be YYYY-MM-DD')
+    }
+    const filter = ownerId ? ownerCondition(ownerId) : undefined
+    const points = await scrollAll(filter, ['user_id', 'salesmanId', 'category', 'label', 'createdAt'])
+    const rows = new Map<string, CustomerMemorySummaryRow>()
+    for (const pt of points) {
+        const p = pt.payload ?? {}
+        if (!p.user_id) continue
+        const created = toIso(p.createdAt)
+        if (!created) continue
+        if (sinceTs !== undefined && new Date(created).getTime() < sinceTs) continue
+        const salesmanId = p.salesmanId === undefined || p.salesmanId === null || p.salesmanId === '' ? null : String(p.salesmanId)
+        const category = typeof p.category === 'string' && p.category ? p.category : 'other'
+        const label = typeof p.label === 'string' && p.label ? p.label : 'Other'
+        const week = weekStart(created)
+        const key = [p.user_id, salesmanId ?? '', category, label, week].join('\u0000')
+        const row = rows.get(key) ?? { userId: p.user_id, salesmanId, category, label, week, count: 0 }
+        row.count++
+        rows.set(key, row)
+    }
+    return [...rows.values()].sort(
+        (a, b) =>
+            b.week.localeCompare(a.week) ||
+            a.userId.localeCompare(b.userId) ||
+            a.category.localeCompare(b.category) ||
+            a.label.localeCompare(b.label)
+    )
 }
 
 const deleteAllFacts = async (userId: string): Promise<{ deleted: number }> => {
@@ -133,6 +215,8 @@ const deleteAllFacts = async (userId: string): Promise<{ deleted: number }> => {
     }
     // mem0 also links entities per user in `<collection>_entities`; purge those too (PDPA "forget").
     await qdrant('POST', `${collectionPath(`${getCollectionName()}_entities`)}/points/delete?wait=true`, { filter: userFilter(userId) }, true)
+    // ...and the stored at-a-glance summary.
+    await qdrant('POST', `${collectionPath(getSummaryCollectionName())}/points/delete?wait=true`, { filter: userFilter(userId) }, true)
     return { deleted: points.length }
 }
 
@@ -182,4 +266,4 @@ const listUsers = async (ownerId?: string, updatedBefore?: string): Promise<Cust
         .map(({ _ts, ...u }) => u)
 }
 
-export default { getFacts, deleteAllFacts, deleteFact, listUsers }
+export default { getFacts, getSummary, deleteAllFacts, deleteFact, listUsers }

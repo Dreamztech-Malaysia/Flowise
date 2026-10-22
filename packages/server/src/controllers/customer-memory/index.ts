@@ -4,8 +4,9 @@ import customerMemoryService from '../../services/customer-memory'
 const getFacts = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const userId = req.params.userId
-        const facts = await customerMemoryService.getFacts(userId)
-        return res.json({ userId, count: facts.length, facts })
+        const { facts, summary, summaryUpdatedAt } = await customerMemoryService.getFacts(userId)
+        // Superset of the previous { userId, count, facts } shape; facts now also carry `label`.
+        return res.json({ userId, count: facts.length, summary, summaryUpdatedAt, facts })
     } catch (error) {
         next(error)
     }
@@ -43,4 +44,14 @@ const listUsers = async (req: Request, res: Response, next: NextFunction) => {
     }
 }
 
-export default { getFacts, deleteAllFacts, deleteFact, listUsers }
+const getSummary = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const ownerId = typeof req.query.ownerId === 'string' && req.query.ownerId !== '' ? req.query.ownerId : undefined
+        const since = typeof req.query.since === 'string' && req.query.since !== '' ? req.query.since : undefined
+        return res.json(await customerMemoryService.getSummary(ownerId, since))
+    } catch (error) {
+        next(error)
+    }
+}
+
+export default { getFacts, getSummary, deleteAllFacts, deleteFact, listUsers }
