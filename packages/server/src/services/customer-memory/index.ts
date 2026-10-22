@@ -231,6 +231,9 @@ const deleteFact = async (userId: string, memoryId: string): Promise<{ deleted: 
         throw new InternalFlowiseError(StatusCodes.NOT_FOUND, `Memory ${memoryId} not found for this user`)
     }
     await qdrant('POST', `${collectionPath()}/points/delete?wait=true`, { points: [id] })
+    // The stored summary may quote the forgotten fact: drop it. The next extraction writes a fresh one and
+    // callers fall back to the remaining facts meanwhile.
+    await qdrant('POST', `${collectionPath(getSummaryCollectionName())}/points/delete?wait=true`, { filter: userFilter(userId) }, true)
     return { deleted: 1 }
 }
 

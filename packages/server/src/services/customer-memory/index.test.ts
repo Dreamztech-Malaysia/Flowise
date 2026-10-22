@@ -85,6 +85,15 @@ describe('customer-memory service', () => {
         expect(r.facts[0]).toMatchObject({ id: 'f1', memory: 'Has kids', category: 'family', label: 'Family' })
     })
 
+    it('deleteFact also drops the stored summary (it may quote the forgotten fact)', async () => {
+        const fetchMock = jest.fn(async (_url: string, _init: any) => ok([{ id: 'f-1', payload: { user_id: '7:a' } }]))
+        global.fetch = fetchMock as any
+        await expect(customerMemoryService.deleteFact('7:a', 'f-1')).resolves.toEqual({ deleted: 1 })
+        const urls = fetchMock.mock.calls.map((c) => c[0])
+        expect(urls).toContain('http://qdrant.test:6333/collections/customer_memory/points/delete?wait=true')
+        expect(urls).toContain('http://qdrant.test:6333/collections/customer_memory_summaries/points/delete?wait=true')
+    })
+
     it('deleteAllFacts also deletes the stored summary', async () => {
         const fetchMock = jest.fn(async (_url: string, _init: any) => ok({ points: [{ id: 1 }], next_page_offset: null }))
         global.fetch = fetchMock as any
