@@ -2,9 +2,14 @@ import { AIMessage } from '@langchain/core/messages'
 import {
     buildBackfillMessages,
     CUSTOMER_MEMORY_FACTS_HEADER,
+    extractionCapture,
     formatFacts,
     parseCustomerMemoryConfig,
-    redactSecrets
+    parseExtractionExtras,
+    redactSecrets,
+    resolveTag,
+    ruleTag,
+    wrapLlmForCapture
 } from './customerMemory'
 import { SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
 
@@ -34,6 +39,31 @@ describe('parseCustomerMemoryConfig', () => {
         })
         expect(parseCustomerMemoryConfig({ ...base, backfill: true })?.baseUrl).toBe('https://api.openai.com/v1')
         expect(parseCustomerMemoryConfig({ ...base, backfill: true })?.backfill).toBe(true)
+        expect(parseCustomerMemoryConfig({ ...base, salesmanId: 33 })?.salesmanId).toBe('33')
+        expect(parseCustomerMemoryConfig({ ...base, salesmanId: ' ' })).not.toHaveProperty('salesmanId')
+    })
+})
+
+describe('category/label tagging', () => {
+    it('parses per-fact category/label from the raw extraction JSON and falls back to keyword rules', () => {
+        const raw =
+            '```json\n{"memory":[{"id":"0","text":"Wants the family package","category":"Interest","label":"family package"},' +
+            '{"id":"1","text":"Thinks price is too high","category":"bogus"}]}\n```'
+        const ex = parseExtractionExtras(raw)
+        expect(resolveTag('Wants the family package', ex)).toEqual({ category: 'interest', label: 'Family package' })
+        expect(resolveTag('Thinks price is too high', ex)).toEqual({ category: 'objection', label: 'Price Too High' })
+        expect(resolveTag('Has two kids', parseExtractionExtras('garbage'))).toEqual({ category: 'family', label: 'Family' })
+        expect(ruleTag('Blue sky')).toEqual({ category: 'other', label: 'Other' })
+    })
+
+    it('captures the raw LLM response only inside extractionCapture.run', async () => {
+        const memory: any = { llm: { generateResponse: async () => '{"memory":[]}' } }
+        wrapLlmForCapture(memory)
+        wrapLlmForCapture(memory)
+        const cap: any = {}
+        await extractionCapture.run(cap, () => memory.llm.generateResponse([]))
+        expect(cap.raw).toBe('{"memory":[]}')
+        await expect(memory.llm.generateResponse([])).resolves.toBe('{"memory":[]}')
     })
 })
 
@@ -102,7 +132,7 @@ describe('SelfHostedCustomerMemory', () => {
             ...extra
         })
 
-    const cm = { enabled: true, userId: '7:abc', ownerId: 7, apiKey: 'sk-test-aaaaaaaa', backfill: true }
+    const cm = { enabled: true, userId: '7:abc', ownerId: 7, salesmanId: 's9', apiKey: 'sk-test-aaaaaaaa', backfill: true }
 
     it('acts as plain buffer memory when customerMemory is missing (no mem0 calls)', async () => {
         const mem0 = { search: jest.fn(), add: jest.fn(), getAll: jest.fn() }
@@ -155,7 +185,10 @@ describe('SelfHostedCustomerMemory', () => {
         expect(mem0.add).toHaveBeenCalledTimes(1)
         const [messages, opts] = (mem0.add.mock.calls[0] as any[]) ?? []
         expect(messages.map((x: any) => x.content)).toEqual(['old question', 'old answer', 'new q', 'new a'])
-        expect(opts).toEqual({ userId: '7:abc', metadata: { source: 'flowise', chatflow_id: 'cf1', owner_id: 7, session_id: 's1' } })
+        expect(opts).toEqual({
+            userId: '7:abc',
+            metadata: { source: 'flowise', chatflow_id: 'cf1', owner_id: 7, ownerId: 7, salesmanId: 's9', session_id: 's1' }
+        })
         expect(silent.warn).toHaveBeenCalled()
     })
 
@@ -177,5 +210,29 @@ describe('SelfHostedCustomerMemory', () => {
         ])
         await m2.lastAdd
         expect(ro.add).not.toHaveBeenCalled()
+    })
+
+    it('tags newly added facts with category/label from the same extraction response (no extra LLM call)', async () => {
+        const llm = { generateResponse: jest.fn(async () => '{"memory":[{"id":"0","text":"Wants a family package","category":"interest","label":"Family package"},{"id":"1","text":"Has 3 kids"}]}') }
+        const mem0: any = {
+            llm,
+            search: jest.fn(),
+            getAll: jest.fn(async () => ({ results: [{ id: 'x' }] })),
+            add: jest.fn(async () => {
+                await mem0.llm.generateResponse([])
+                return { results: [{ id: 'f1', memory: 'Wants a family package' }, { id: 'f2', memory: 'Has 3 kids' }] }
+            }),
+            setPayload: jest.fn(async () => undefined)
+        }
+        wrapLlmForCapture(mem0)
+        const m = make(cm, mem0)
+        await m.addChatMessages([
+            { text: 'q', type: 'userMessage' },
+            { text: 'a', type: 'apiMessage' }
+        ])
+        await m.lastAdd
+        expect(llm.generateResponse).toHaveBeenCalledTimes(1)
+        expect(mem0.setPayload).toHaveBeenCalledWith(['f1'], { category: 'interest', label: 'Family package' })
+        expect(mem0.setPayload).toHaveBeenCalledWith(['f2'], { category: 'family', label: 'Family' })
     })
 })

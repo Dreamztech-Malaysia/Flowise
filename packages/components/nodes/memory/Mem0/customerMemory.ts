@@ -8,6 +8,7 @@
  * NOTE: this file has no `nodeClass` export on purpose; NodesPool skips it.
  */
 import { createHash } from 'crypto'
+import { AsyncLocalStorage } from 'async_hooks'
 
 export const CUSTOMER_MEMORY_DEFAULT_COLLECTION = 'customer_memory'
 export const CUSTOMER_MEMORY_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
@@ -22,6 +23,7 @@ export interface CustomerMemoryRequest {
     enabled?: boolean | string
     userId?: string
     ownerId?: number | string
+    salesmanId?: number | string
     apiKey?: string
     baseUrl?: string
     llmModel?: string
@@ -33,6 +35,7 @@ export interface CustomerMemoryRequest {
 export interface CustomerMemoryConfig {
     userId: string
     ownerId?: number
+    salesmanId?: string
     apiKey: string
     baseUrl: string
     llmModel: string
@@ -72,11 +75,16 @@ export const parseCustomerMemoryConfig = (raw: unknown): CustomerMemoryConfig | 
         const n = Number(obj.ownerId)
         if (Number.isFinite(n)) ownerId = n
     }
+    let salesmanId: string | undefined
+    if ((typeof obj.salesmanId === 'string' || typeof obj.salesmanId === 'number') && String(obj.salesmanId).trim()) {
+        salesmanId = String(obj.salesmanId).trim().slice(0, 128)
+    }
 
     const str = (v: unknown, d: string) => (typeof v === 'string' && v.trim() ? v.trim() : d)
     return {
         userId,
         ownerId,
+        ...(salesmanId !== undefined ? { salesmanId } : {}),
         apiKey,
         baseUrl: str(obj.baseUrl, CUSTOMER_MEMORY_DEFAULT_BASE_URL).replace(/\/+$/, ''),
         llmModel: str(obj.llmModel, CUSTOMER_MEMORY_DEFAULT_LLM_MODEL),
@@ -127,6 +135,120 @@ export const buildBackfillMessages = (
     return mapped
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// Category + label tagging (piggybacks on mem0's own extraction LLM call; no extra request)
+// ---------------------------------------------------------------------------------------------------------
+
+export const FACT_CATEGORIES = ['interest', 'objection', 'budget', 'location', 'timing', 'family', 'other'] as const
+export type FactCategory = (typeof FACT_CATEGORIES)[number]
+export interface FactTag {
+    category: FactCategory
+    label: string
+}
+
+/**
+ * Appended to mem0's additive extraction prompt via `customInstructions`. mem0 3.x drops unknown keys when it
+ * zod-parses the response, so the raw response is captured (see `extractionCapture`) and parsed here instead.
+ * Cost: ~120 extra prompt tokens + ~10 output tokens per fact, same request.
+ */
+export const CUSTOMER_MEMORY_TAG_INSTRUCTIONS =
+    'For every item in "memory" also output "category" (exactly one of: interest, objection, budget, location, timing, family, other) ' +
+    'and "label" (a short normalized 1-4 word Title-case phrase, e.g. "Family Package", "Price Too High", "Budget RM50k"). Keep "text" unchanged.'
+
+export const normalizeCategory = (v: unknown): FactCategory | null => {
+    const s = typeof v === 'string' ? v.trim().toLowerCase() : ''
+    return (FACT_CATEGORIES as readonly string[]).includes(s) ? (s as FactCategory) : null
+}
+
+export const normalizeLabel = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null
+    const s = v.replace(/\s+/g, ' ').replace(/^[\s"'.:-]+|[\s"'.:-]+$/g, '').trim()
+    if (!s) return null
+    const short = s.length > 48 ? s.slice(0, 48).trim() : s
+    return short.charAt(0).toUpperCase() + short.slice(1)
+}
+
+/** Cheap keyword fallback when the LLM omitted/garbled category or label. Order matters (first hit wins). */
+const CATEGORY_RULES: { category: FactCategory; label: string; re: RegExp }[] = [
+    { category: 'objection', label: 'Price Too High', re: /\b(too (expensive|pricey|costly)|price (is )?too high|can'?t afford|mahal)\b/i },
+    { category: 'objection', label: 'Not Interested', re: /\b(not interested|no longer interested|tak (nak|mahu)|declined?)\b/i },
+    { category: 'objection', label: 'Has Concerns', re: /\b(concern(ed)?|worried|hesitant|doubt|complain(ed|t)?|unhappy|objection)\b/i },
+    { category: 'budget', label: 'Budget', re: /\b(budget|afford|rm ?\d|\$ ?\d|usd|myr|price range|loan|financing|installment|down ?payment)\b/i },
+    { category: 'family', label: 'Family', re: /\b(wife|husband|spouse|kids?|children|child|son|daughter|family|parents?|married|baby)\b/i },
+    { category: 'timing', label: 'Timing', re: /\b(next (week|month|year)|this (week|month|year)|tomorrow|today|soon|asap|urgent|by (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|deadline|\d{4}-\d{2}-\d{2}|q[1-4])\b/i },
+    { category: 'location', label: 'Location', re: /\b(lives? in|located|based in|area|city|town|near|address|kuala lumpur|kl|selangor|penang|johor|singapore)\b/i },
+    { category: 'interest', label: 'Interest', re: /\b(interested|wants?|looking for|prefers?|likes?|asked about|enquir|inquir|considering|keen)\b/i }
+]
+
+export const ruleTag = (text: string): FactTag => {
+    for (const r of CATEGORY_RULES) if (r.re.test(text)) return { category: r.category, label: r.label }
+    return { category: 'other', label: 'Other' }
+}
+
+const normText = (t: string) => t.trim().replace(/\s+/g, ' ').toLowerCase()
+
+export interface ExtractionExtras {
+    tags: Map<string, Partial<FactTag>>
+    summary: string | null
+}
+
+/** Parse the raw mem0 extraction response for our extra per-fact keys. Never throws. */
+export const parseExtractionExtras = (raw: unknown): ExtractionExtras => {
+    const out: ExtractionExtras = { tags: new Map(), summary: null }
+    if (typeof raw !== 'string' || !raw.trim()) return out
+    let json: any
+    try {
+        const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
+        const start = cleaned.indexOf('{')
+        const end = cleaned.lastIndexOf('}')
+        if (start < 0 || end <= start) return out
+        json = JSON.parse(cleaned.slice(start, end + 1))
+    } catch {
+        return out
+    }
+    for (const m of Array.isArray(json?.memory) ? json.memory : []) {
+        if (typeof m?.text !== 'string' || !m.text.trim()) continue
+        const tag: Partial<FactTag> = {}
+        const c = normalizeCategory(m.category)
+        const l = normalizeLabel(m.label)
+        if (c) tag.category = c
+        if (l) tag.label = l
+        out.tags.set(normText(m.text), tag)
+    }
+    if (typeof json?.summary === 'string' && json.summary.trim()) out.summary = json.summary.replace(/\s+/g, ' ').trim().slice(0, 600)
+    return out
+}
+
+/** LLM tag when valid, keyword rules for whatever is missing. */
+export const resolveTag = (text: string, extras: ExtractionExtras): FactTag => {
+    const llm = extras.tags.get(normText(text)) ?? {}
+    const rule = ruleTag(text)
+    const category = llm.category ?? rule.category
+    // a rule label only makes sense for the rule's own category
+    const label = llm.label ?? (category === rule.category ? rule.label : normalizeLabel(category) ?? 'Other')
+    return { category, label }
+}
+
+/** Raw extraction response captured per add() call (AsyncLocalStorage, so concurrent customers never mix). */
+export interface ExtractionCapture {
+    raw?: string
+}
+export const extractionCapture = new AsyncLocalStorage<ExtractionCapture>()
+
+/** Wrap mem0's LLM so the raw JSON of the extraction call is visible to us. Idempotent. */
+export const wrapLlmForCapture = (memory: any) => {
+    const llm = memory?.llm
+    if (!llm || typeof llm.generateResponse !== 'function' || llm.__customerMemoryWrapped) return
+    const orig = llm.generateResponse.bind(llm)
+    llm.generateResponse = async (...args: any[]) => {
+        const res = await orig(...args)
+        const store = extractionCapture.getStore()
+        if (store && typeof res === 'string') store.raw = res
+        return res
+    }
+    llm.__customerMemoryWrapped = true
+}
+
 export const getCollectionName = (): string => process.env.CUSTOMER_MEMORY_COLLECTION || CUSTOMER_MEMORY_DEFAULT_COLLECTION
 
 export const getEmbeddingDims = (): number => {
@@ -158,6 +280,8 @@ export interface Mem0Like {
     add(messages: Mem0ChatMessage[], config: Record<string, any>): Promise<any>
     search(query: string, config: Record<string, any>): Promise<{ results: any[] }>
     getAll(config: Record<string, any>): Promise<{ results: any[] }>
+    /** Merge payload keys into existing points (category/label after extraction). Optional for test doubles. */
+    setPayload?(ids: string[], payload: Record<string, any>): Promise<void>
 }
 
 const MAX_CACHED_INSTANCES = 200
@@ -194,16 +318,23 @@ export const getMem0Instance = async (cfg: CustomerMemoryConfig): Promise<Mem0Li
     // Only text-embedding-3-* accepts the `dimensions` param; others must natively match the collection size.
     if (/^text-embedding-3/.test(cfg.embeddingModel)) embedderConfig.embeddingDims = dims
 
+    const collectionName = getCollectionName()
     const memory = new Memory({
         version: 'v1.1',
         disableHistory: true,
+        customInstructions: CUSTOMER_MEMORY_TAG_INSTRUCTIONS,
         embedder: { provider: 'openai', config: embedderConfig },
         llm: { provider: 'openai', config: { apiKey: cfg.apiKey, baseURL: cfg.baseUrl, model: cfg.llmModel } },
         vectorStore: {
             provider: 'qdrant',
-            config: { client, collectionName: getCollectionName(), embeddingModelDims: dims, dimension: dims }
+            config: { client, collectionName, embeddingModelDims: dims, dimension: dims }
         }
     }) as unknown as Mem0Like
+    wrapLlmForCapture(memory)
+    memory.setPayload = async (ids: string[], payload: Record<string, any>) => {
+        if (!ids.length) return
+        await client.setPayload(collectionName, { points: ids, payload, wait: true })
+    }
 
     instanceCache.set(key, memory)
     if (instanceCache.size > MAX_CACHED_INSTANCES) {

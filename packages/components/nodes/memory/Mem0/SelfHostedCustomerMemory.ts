@@ -6,12 +6,16 @@ import { mapChatMessageToBaseMessage } from '../../../src/utils'
 import {
     buildBackfillMessages,
     CustomerMemoryConfig,
+    ExtractionCapture,
+    extractionCapture,
     formatFacts,
     getMem0Instance,
     Mem0ChatMessage,
     Mem0Like,
     parseCustomerMemoryConfig,
+    parseExtractionExtras,
     redactSecrets,
+    resolveTag,
     withTimeout
 } from './customerMemory'
 
@@ -210,8 +214,42 @@ export class SelfHostedCustomerMemory extends FlowiseMemory implements MemoryMet
         }
 
         const metadata: Record<string, any> = { source: 'flowise', chatflow_id: this.chatflowid }
-        if (cfg.ownerId !== undefined) metadata.owner_id = cfg.ownerId
+        // owner_id (snake) is what the server filters on; ownerId/salesmanId (camel) are the reporting keys.
+        if (cfg.ownerId !== undefined) {
+            metadata.owner_id = cfg.ownerId
+            metadata.ownerId = cfg.ownerId
+        }
+        if (cfg.salesmanId !== undefined) metadata.salesmanId = cfg.salesmanId
         if (sessionId) metadata.session_id = sessionId
-        await mem0.add(messages, { userId: cfg.userId, metadata })
+
+        const capture: ExtractionCapture = {}
+        const res = await extractionCapture.run(capture, () => mem0.add(messages, { userId: cfg.userId, metadata }))
+        const added: { id: string; memory: string }[] = (res?.results ?? []).filter(
+            (r: any) => r && typeof r.id === 'string' && typeof r.memory === 'string'
+        )
+        if (!added.length) return
+        await this.tagFacts(mem0, added, capture)
+    }
+
+    /** category/label come from the same extraction response (no extra LLM call); keyword rules fill gaps. */
+    private async tagFacts(mem0: Mem0Like, added: { id: string; memory: string }[], capture: ExtractionCapture) {
+        if (!mem0.setPayload) return
+        const extras = parseExtractionExtras(capture.raw)
+        // group by identical tag so most turns cost one Qdrant set_payload request
+        const groups = new Map<string, { tag: { category: string; label: string }; ids: string[] }>()
+        for (const f of added) {
+            const tag = resolveTag(f.memory, extras)
+            const k = `${tag.category}\u0000${tag.label}`
+            const g = groups.get(k) ?? { tag, ids: [] }
+            g.ids.push(f.id)
+            groups.set(k, g)
+        }
+        for (const g of groups.values()) {
+            try {
+                await mem0.setPayload(g.ids, { category: g.tag.category, label: g.tag.label })
+            } catch (e) {
+                this.warn('tagging facts failed (facts kept untagged)', e)
+            }
+        }
     }
 }
