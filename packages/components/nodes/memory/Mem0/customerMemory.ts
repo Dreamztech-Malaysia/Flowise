@@ -153,7 +153,9 @@ export interface FactTag {
  */
 export const CUSTOMER_MEMORY_TAG_INSTRUCTIONS =
     'For every item in "memory" also output "category" (exactly one of: interest, objection, budget, location, timing, family, other) ' +
-    'and "label" (a short normalized 1-4 word Title-case phrase, e.g. "Family Package", "Price Too High", "Budget RM50k"). Keep "text" unchanged.'
+    'and "label" (a short normalized 1-4 word Title-case phrase, e.g. "Family Package", "Price Too High", "Budget RM50k"). Keep "text" unchanged. ' +
+    'If "memory" is non-empty, also output a top-level "summary": an "at a glance" description of the customer in 1-2 sentences (max 40 words), ' +
+    'rewriting the Current Customer Summary to include the new facts. Omit "summary" when "memory" is empty.'
 
 export const normalizeCategory = (v: unknown): FactCategory | null => {
     const s = typeof v === 'string' ? v.trim().toLowerCase() : ''
@@ -232,7 +234,29 @@ export const resolveTag = (text: string, extras: ExtractionExtras): FactTag => {
 /** Raw extraction response captured per add() call (AsyncLocalStorage, so concurrent customers never mix). */
 export interface ExtractionCapture {
     raw?: string
+    /** Injected into the extraction prompt so the model can rewrite (not re-derive) the summary. */
+    previousSummary?: string | null
 }
+
+export const SUMMARY_PROMPT_HEADER = '## Current Customer Summary'
+
+/** Append the stored summary to the last user message of the extraction request (mutates a copy). */
+export const injectSummary = (messages: any[], previousSummary: string | null | undefined): any[] => {
+    if (!Array.isArray(messages) || !messages.length) return messages
+    const idx = messages.map((m) => m?.role).lastIndexOf('user')
+    if (idx < 0 || typeof messages[idx]?.content !== 'string') return messages
+    const copy = messages.slice()
+    copy[idx] = { ...messages[idx], content: `${messages[idx].content}\n\n${SUMMARY_PROMPT_HEADER}\n${previousSummary?.trim() || '(none yet)'}` }
+    return copy
+}
+
+/** Deterministic UUID for the per-customer summary point (same derivation as the server). */
+export const summaryPointId = (userId: string): string => {
+    const h = createHash('sha256').update(`customer-summary:${userId}`).digest('hex')
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`
+}
+
+export const getSummaryCollectionName = (): string => `${getCollectionName()}_summaries`
 export const extractionCapture = new AsyncLocalStorage<ExtractionCapture>()
 
 /** Wrap mem0's LLM so the raw JSON of the extraction call is visible to us. Idempotent. */
@@ -241,8 +265,9 @@ export const wrapLlmForCapture = (memory: any) => {
     if (!llm || typeof llm.generateResponse !== 'function' || llm.__customerMemoryWrapped) return
     const orig = llm.generateResponse.bind(llm)
     llm.generateResponse = async (...args: any[]) => {
-        const res = await orig(...args)
         const store = extractionCapture.getStore()
+        if (store && 'previousSummary' in store) args[0] = injectSummary(args[0], store.previousSummary)
+        const res = await orig(...args)
         if (store && typeof res === 'string') store.raw = res
         return res
     }
@@ -282,6 +307,8 @@ export interface Mem0Like {
     getAll(config: Record<string, any>): Promise<{ results: any[] }>
     /** Merge payload keys into existing points (category/label after extraction). Optional for test doubles. */
     setPayload?(ids: string[], payload: Record<string, any>): Promise<void>
+    getSummary?(userId: string): Promise<string | null>
+    saveSummary?(userId: string, summary: string, payload: Record<string, any>): Promise<void>
 }
 
 const MAX_CACHED_INSTANCES = 200
@@ -334,6 +361,37 @@ export const getMem0Instance = async (cfg: CustomerMemoryConfig): Promise<Mem0Li
     memory.setPayload = async (ids: string[], payload: Record<string, any>) => {
         if (!ids.length) return
         await client.setPayload(collectionName, { points: ids, payload, wait: true })
+    }
+    // Summaries live in `<collection>_summaries`: one point per customer, 1-dim dummy vector, payload only.
+    const summaryCollection = getSummaryCollectionName()
+    let summaryReady: Promise<void> | null = null
+    const ensureSummaryCollection = () =>
+        (summaryReady ??= (async () => {
+            const { exists } = await client.collectionExists(summaryCollection)
+            if (!exists) {
+                try {
+                    await client.createCollection(summaryCollection, { vectors: { size: 1, distance: 'Dot' } })
+                } catch (e: any) {
+                    if (!/already exists/i.test(String(e?.message ?? e))) throw e
+                }
+            }
+        })().catch((e) => {
+            summaryReady = null
+            throw e
+        }))
+    memory.getSummary = async (userId: string) => {
+        const { exists } = await client.collectionExists(summaryCollection)
+        if (!exists) return null
+        const pts = await client.retrieve(summaryCollection, { ids: [summaryPointId(userId)], with_payload: true, with_vector: false })
+        const v = pts?.[0]?.payload?.summary
+        return typeof v === 'string' ? v : null
+    }
+    memory.saveSummary = async (userId: string, summary: string, payload: Record<string, any>) => {
+        await ensureSummaryCollection()
+        await client.upsert(summaryCollection, {
+            wait: true,
+            points: [{ id: summaryPointId(userId), vector: [1], payload: { ...payload, user_id: userId, summary, updatedAt: new Date().toISOString() } }]
+        })
     }
 
     instanceCache.set(key, memory)

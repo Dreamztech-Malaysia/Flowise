@@ -4,11 +4,13 @@ import {
     CUSTOMER_MEMORY_FACTS_HEADER,
     extractionCapture,
     formatFacts,
+    injectSummary,
     parseCustomerMemoryConfig,
     parseExtractionExtras,
     redactSecrets,
     resolveTag,
     ruleTag,
+    summaryPointId,
     wrapLlmForCapture
 } from './customerMemory'
 import { SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
@@ -234,5 +236,53 @@ describe('SelfHostedCustomerMemory', () => {
         expect(llm.generateResponse).toHaveBeenCalledTimes(1)
         expect(mem0.setPayload).toHaveBeenCalledWith(['f1'], { category: 'interest', label: 'Family package' })
         expect(mem0.setPayload).toHaveBeenCalledWith(['f2'], { category: 'family', label: 'Family' })
+    })
+
+    it('rewrites the summary in the same extraction call only when new facts were added', async () => {
+        const llm = {
+            generateResponse: jest.fn(async (msgs: any[]) => {
+                expect(msgs[1].content).toContain('## Current Customer Summary\nOld summary')
+                return '{"memory":[{"id":"0","text":"Budget RM500k","category":"budget","label":"Budget RM500k"}],"summary":"Buyer with RM500k budget."}'
+            })
+        }
+        const results = [{ id: 'f1', memory: 'Budget RM500k' }]
+        const mem0: any = {
+            llm,
+            search: jest.fn(),
+            getAll: jest.fn(async () => ({ results: [{ id: 'x' }] })),
+            add: jest.fn(async () => {
+                await mem0.llm.generateResponse([{ role: 'system', content: 's' }, { role: 'user', content: 'u' }])
+                return { results }
+            }),
+            setPayload: jest.fn(async () => undefined),
+            getSummary: jest.fn(async () => 'Old summary'),
+            saveSummary: jest.fn(async () => undefined)
+        }
+        wrapLlmForCapture(mem0)
+        const m = make(cm, mem0)
+        await m.addChatMessages([{ text: 'q', type: 'userMessage' }])
+        await m.lastAdd
+        expect(llm.generateResponse).toHaveBeenCalledTimes(1)
+        expect(mem0.saveSummary).toHaveBeenCalledWith('7:abc', 'Buyer with RM500k budget.', { owner_id: 7, salesmanId: 's9' })
+
+        results.length = 0
+        await m.addChatMessages([{ text: 'q2', type: 'userMessage' }])
+        await m.lastAdd
+        expect(mem0.saveSummary).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('summary helpers', () => {
+    it('injects the previous summary into the last user message without mutating input', () => {
+        const msgs = [{ role: 'system', content: 's' }, { role: 'user', content: 'u' }]
+        const out = injectSummary(msgs, null)
+        expect(out[1].content).toBe('u\n\n## Current Customer Summary\n(none yet)')
+        expect(msgs[1].content).toBe('u')
+    })
+
+    it('derives a stable uuid per user', () => {
+        expect(summaryPointId('7:a')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+        expect(summaryPointId('7:a')).toBe(summaryPointId('7:a'))
+        expect(summaryPointId('7:a')).not.toBe(summaryPointId('7:b'))
     })
 })

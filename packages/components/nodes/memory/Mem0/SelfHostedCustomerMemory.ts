@@ -8,6 +8,7 @@ import {
     CustomerMemoryConfig,
     ExtractionCapture,
     extractionCapture,
+    ExtractionExtras,
     formatFacts,
     getMem0Instance,
     Mem0ChatMessage,
@@ -223,18 +224,37 @@ export class SelfHostedCustomerMemory extends FlowiseMemory implements MemoryMet
         if (sessionId) metadata.session_id = sessionId
 
         const capture: ExtractionCapture = {}
+        if (mem0.getSummary) {
+            try {
+                capture.previousSummary = await mem0.getSummary(cfg.userId)
+            } catch (e) {
+                this.warn('summary lookup failed', e)
+                capture.previousSummary = null
+            }
+        }
         const res = await extractionCapture.run(capture, () => mem0.add(messages, { userId: cfg.userId, metadata }))
         const added: { id: string; memory: string }[] = (res?.results ?? []).filter(
             (r: any) => r && typeof r.id === 'string' && typeof r.memory === 'string'
         )
+        // Fact set unchanged => keep the stored summary as is.
         if (!added.length) return
-        await this.tagFacts(mem0, added, capture)
+        const extras = parseExtractionExtras(capture.raw)
+        await this.tagFacts(mem0, added, extras)
+        if (extras.summary && mem0.saveSummary) {
+            const payload: Record<string, any> = {}
+            if (cfg.ownerId !== undefined) payload.owner_id = cfg.ownerId
+            if (cfg.salesmanId !== undefined) payload.salesmanId = cfg.salesmanId
+            try {
+                await mem0.saveSummary(cfg.userId, extras.summary, payload)
+            } catch (e) {
+                this.warn('saving summary failed', e)
+            }
+        }
     }
 
     /** category/label come from the same extraction response (no extra LLM call); keyword rules fill gaps. */
-    private async tagFacts(mem0: Mem0Like, added: { id: string; memory: string }[], capture: ExtractionCapture) {
+    private async tagFacts(mem0: Mem0Like, added: { id: string; memory: string }[], extras: ExtractionExtras) {
         if (!mem0.setPayload) return
-        const extras = parseExtractionExtras(capture.raw)
         // group by identical tag so most turns cost one Qdrant set_payload request
         const groups = new Map<string, { tag: { category: string; label: string }; ids: string[] }>()
         for (const f of added) {
