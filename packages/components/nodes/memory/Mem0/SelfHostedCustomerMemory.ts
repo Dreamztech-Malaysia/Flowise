@@ -21,6 +21,7 @@ import {
 } from './customerMemory'
 
 const RECALL_TIMEOUT_MS = 8000
+const RECALL_THRESHOLD = 0
 const MAX_MESSAGE_CHARS = 4000
 
 export interface SelfHostedCustomerMemoryInput {
@@ -111,7 +112,13 @@ export class SelfHostedCustomerMemory extends FlowiseMemory implements MemoryMet
         try {
             const mem0 = await this.mem0Factory(cfg)
             const filters: Record<string, any> = { user_id: cfg.userId }
-            const res = await withTimeout(mem0.search(query, { topK: this.recallLimit, filters }), RECALL_TIMEOUT_MS, 'mem0 search')
+            // mem0 3.x drops hits below a 0.1 semantic score by default; generic turns ("which package suits me?")
+            // score below that against fact text, so most facts were lost. A customer has few facts: rank, don't cut.
+            const res = await withTimeout(
+                mem0.search(query, { topK: this.recallLimit, threshold: RECALL_THRESHOLD, filters }),
+                RECALL_TIMEOUT_MS,
+                'mem0 search'
+            )
             return formatFacts(res?.results ?? [], this.recallLimit)
         } catch (e) {
             this.warn('recall failed, continuing without facts', e)

@@ -153,7 +153,7 @@ describe('SelfHostedCustomerMemory', () => {
     it('injects recalled facts before history', async () => {
         const mem0 = { search: jest.fn(async () => ({ results: [{ memory: 'Prefers blue' }] })), add: jest.fn(), getAll: jest.fn() }
         const msgs: any[] = (await make(cm, mem0).getChatMessages('s1', true)) as any[]
-        expect(mem0.search).toHaveBeenCalledWith('what colour?', { topK: 15, filters: { user_id: '7:abc' } })
+        expect(mem0.search).toHaveBeenCalledWith('what colour?', { topK: 15, threshold: 0, filters: { user_id: '7:abc' } })
         expect(msgs[0]).toBeInstanceOf(AIMessage)
         expect(msgs[0].content).toContain('Prefers blue')
         expect(msgs[0].content).toContain('outdated')
