@@ -68,9 +68,9 @@ describe('customer-memory service', () => {
         await expect(customerMemoryService.deleteFact('7:a', 'f-1')).rejects.toThrow(/not found/)
     })
 
-    it('returns an empty list when the collection does not exist yet', async () => {
+    it('returns empty facts and no summary when the collections do not exist yet', async () => {
         global.fetch = jest.fn(async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => '' })) as any
-        await expect(customerMemoryService.getFacts('7:a')).resolves.toEqual([])
+        await expect(customerMemoryService.getFacts('7:a')).resolves.toEqual({ facts: [], summary: null, summaryUpdatedAt: null })
     })
 
     it('returns facts plus the stored summary', async () => {

@@ -215,7 +215,8 @@ describe('SelfHostedCustomerMemory', () => {
     })
 
     it('tags newly added facts with category/label from the same extraction response (no extra LLM call)', async () => {
-        const llm = { generateResponse: jest.fn(async () => '{"memory":[{"id":"0","text":"Wants a family package","category":"interest","label":"Family package"},{"id":"1","text":"Has 3 kids"}]}') }
+        const gen = jest.fn(async () => '{"memory":[{"id":"0","text":"Wants a family package","category":"interest","label":"Family package"},{"id":"1","text":"Has 3 kids"}]}')
+        const llm = { generateResponse: gen }
         const mem0: any = {
             llm,
             search: jest.fn(),
@@ -233,18 +234,17 @@ describe('SelfHostedCustomerMemory', () => {
             { text: 'a', type: 'apiMessage' }
         ])
         await m.lastAdd
-        expect(llm.generateResponse).toHaveBeenCalledTimes(1)
+        expect(gen).toHaveBeenCalledTimes(1)
         expect(mem0.setPayload).toHaveBeenCalledWith(['f1'], { category: 'interest', label: 'Family package' })
         expect(mem0.setPayload).toHaveBeenCalledWith(['f2'], { category: 'family', label: 'Family' })
     })
 
     it('rewrites the summary in the same extraction call only when new facts were added', async () => {
-        const llm = {
-            generateResponse: jest.fn(async (msgs: any[]) => {
+        const gen = jest.fn(async (msgs: any[]) => {
                 expect(msgs[1].content).toContain('## Current Customer Summary\nOld summary')
                 return '{"memory":[{"id":"0","text":"Budget RM500k","category":"budget","label":"Budget RM500k"}],"summary":"Buyer with RM500k budget."}'
-            })
-        }
+        })
+        const llm = { generateResponse: gen }
         const results = [{ id: 'f1', memory: 'Budget RM500k' }]
         const mem0: any = {
             llm,
@@ -262,7 +262,7 @@ describe('SelfHostedCustomerMemory', () => {
         const m = make(cm, mem0)
         await m.addChatMessages([{ text: 'q', type: 'userMessage' }])
         await m.lastAdd
-        expect(llm.generateResponse).toHaveBeenCalledTimes(1)
+        expect(gen).toHaveBeenCalledTimes(1)
         expect(mem0.saveSummary).toHaveBeenCalledWith('7:abc', 'Buyer with RM500k budget.', { owner_id: 7, salesmanId: 's9' })
 
         results.length = 0
