@@ -108,7 +108,7 @@ export const redactSecrets = (message: unknown): string => {
     const s = message instanceof Error ? message.message : String(message ?? '')
     return s
         .replace(/(sk|pk|rk|gsk|xai)-[A-Za-z0-9_\-*]{6,}/g, '$1-***')
-        .replace(/(Bearer\s+)[A-Za-z0-9._\-]+/gi, '$1***')
+        .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, '$1***')
         .replace(/(api[_-]?key["'\s:=]+)[^\s"',}]+/gi, '$1***')
 }
 
