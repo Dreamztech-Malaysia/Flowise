@@ -16,6 +16,7 @@ import {
     ruleTag,
     sanitizeExtraction,
     summaryPointId,
+    supportsDimensions,
     wrapLlmForCapture
 } from './customerMemory'
 import { addCustomerFacts, queueForUser, recallCustomerFacts, SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
@@ -415,6 +416,14 @@ describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the
         await expect(slow).rejects.toThrow('boom')
         await expect(fast).resolves.toBe(2)
         expect(order).toEqual(['a', 'b'])
+    })
+})
+
+describe('embedding dimensions', () => {
+    it('asks OpenAI v3 and Gemini embeddings for the collection size, leaves others alone', () => {
+        expect(supportsDimensions('text-embedding-3-small')).toBe(true)
+        expect(supportsDimensions('gemini-embedding-001')).toBe(true)
+        expect(supportsDimensions('text-embedding-ada-002')).toBe(false)
     })
 })
 

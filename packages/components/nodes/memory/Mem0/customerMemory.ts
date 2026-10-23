@@ -407,6 +407,9 @@ const wrapUsage = (memory: any) => {
 
 export const getCollectionName = (): string => process.env.CUSTOMER_MEMORY_COLLECTION || CUSTOMER_MEMORY_DEFAULT_COLLECTION
 
+/** Embedding models that accept OpenAI's `dimensions` param (OpenAI v3, Gemini via its OpenAI-compatible API). */
+export const supportsDimensions = (model: string): boolean => /^(text-embedding-3|gemini-embedding)/.test(model)
+
 export const getEmbeddingDims = (): number => {
     const n = Number(process.env.CUSTOMER_MEMORY_EMBEDDING_DIMS)
     return Number.isFinite(n) && n > 0 ? n : CUSTOMER_MEMORY_DEFAULT_EMBEDDING_DIMS
@@ -473,8 +476,9 @@ export const getMem0Instance = async (cfg: CustomerMemoryConfig): Promise<Mem0Li
     const dims = getEmbeddingDims()
     const client = new QdrantClient({ url: qdrantUrl, apiKey: process.env.QDRANT_API_KEY || undefined })
     const embedderConfig: Record<string, any> = { apiKey: cfg.apiKey, baseURL: cfg.baseUrl, model: cfg.embeddingModel }
-    // Only text-embedding-3-* accepts the `dimensions` param; others must natively match the collection size.
-    if (/^text-embedding-3/.test(cfg.embeddingModel)) embedderConfig.embeddingDims = dims
+    // text-embedding-3-* and gemini-embedding-* accept the `dimensions` param (Gemini's default is 3072, the collection
+    // is 1536); others must natively match the collection size.
+    if (supportsDimensions(cfg.embeddingModel)) embedderConfig.embeddingDims = dims
 
     const collectionName = getCollectionName()
     const memory = new Memory({
