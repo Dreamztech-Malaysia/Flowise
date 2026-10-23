@@ -152,10 +152,92 @@ export interface FactTag {
  * Cost: ~120 extra prompt tokens + ~10 output tokens per fact, same request.
  */
 export const CUSTOMER_MEMORY_TAG_INSTRUCTIONS =
+    'Only facts the customer stated about themselves; each "text" max 8 words, no subject, no dates ' +
+    '(e.g. "Budget RM500", "Has 2 kids", "Lives in Johor Bahru"). ' +
     'For every item in "memory" also output "category" (exactly one of: interest, objection, budget, location, timing, family, other) ' +
     'and "label" (a short normalized 1-4 word Title-case phrase, e.g. "Family Package", "Price Too High", "Budget RM50k"). Keep "text" unchanged. ' +
     'If "memory" is non-empty, also output a top-level "summary": an "at a glance" description of the customer in 1-2 sentences (max 40 words), ' +
     'rewriting the Current Customer Summary to include the new facts. Omit "summary" when "memory" is empty.'
+
+/**
+ * Appended to mem0's extraction SYSTEM prompt (mem0's default extracts from both roles, writes long sentences and
+ * stamps dates). Sales use needs a short list of what the customer said about themselves.
+ */
+export const CUSTOMER_MEMORY_FACT_RULES = [
+    '# CUSTOMER MEMORY OVERRIDES (these rules take precedence over everything above)',
+    'The "user" is a customer chatting with a sales assistant. Memories are read by the salesperson and the assistant later.',
+    '- Extract ONLY facts the customer stated about themselves in "user" messages: needs, budget, family, location, availability/timing, preferences, objections, decisions.',
+    '- "assistant" messages are context only. NEVER extract what the assistant offered, recommended, quoted, answered or promised. attributed_to is always "user".',
+    '- Each "text" is ONE short fact, max 8 words, without a subject: "Budget RM500", "Has 2 kids", "Lives in Johor Bahru", "Finds Premium package too expensive", "Prefers contact after 6pm".',
+    '- NO dates or time stamps (never "as of October 2026", never the observation/current date). Keep a date only if the customer gave it as part of the fact ("Moving house in December").',
+    '- No duplicates: skip anything already in Existing Memories or already in this output. Skip greetings, plain questions and guesses.',
+    '- If the customer stated nothing new about themselves, return {"memory": []}.'
+].join('\n')
+
+const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+const DATE = `(?:\\d{4}-\\d{2}-\\d{2}|(?:early |mid[- ]|late )?${MONTH}\\.?(?: \\d{1,2}(?:st|nd|rd|th)?,?)? \\d{4}|\\d{1,2}(?:st|nd|rd|th)? ${MONTH}\\.?,? \\d{4})`
+/** "as of October 2026", "as mentioned on 2026-10-23", "(2026-10-23)" -- stamps, not facts */
+const DATE_STAMP_RE = new RegExp(`[,(]?\\s*\\b(?:as of|as at|as mentioned (?:on|in)|mentioned (?:on|in)|stated (?:on|in)|noted (?:on|in)|reported (?:on|in))\\s+${DATE}\\)?|\\(\\s*${DATE}\\s*\\)`, 'gi')
+const SUBJECT_RE = /^(?:the\s+)?(?:user|customer|client|lead)(?:'s|’s)?\s+/i
+const ASSISTANT_FACT_RE =
+    /^(?:was|were|has been|have been)\s+(?:recommended|offered|told|informed|advised|quoted|sent|given)\b|\b(?:assistant|ai|agent|salesman|bot)\s+(?:recommended|offered|suggested|said|quoted|promised|explained)\b/i
+
+/** Short, subject-less, date-free fact text. '' when nothing is left. */
+export const cleanFactText = (text: unknown): string => {
+    if (typeof text !== 'string') return ''
+    let s = text.replace(/\s+/g, ' ').trim()
+    s = s.replace(DATE_STAMP_RE, '').replace(/\s+([,.;])/g, '$1').replace(/\s{2,}/g, ' ').trim()
+    const stripped = s.replace(SUBJECT_RE, '')
+    if (stripped && stripped !== s) {
+        // "User is ..." -> "Is ..." reads badly; drop a leading copula too
+        s = stripped.replace(/^(?:is|are)\s+/i, '')
+    }
+    s = s.replace(/[\s.;,]+$/g, '').trim()
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''
+}
+
+/**
+ * Enforce the fact rules on mem0's raw extraction JSON before mem0 parses it: drop assistant-attributed and
+ * assistant-offer facts, clean each text, drop duplicates. Extra keys (category/label/summary) are kept.
+ * Returns the input unchanged when it is not parseable JSON.
+ */
+export const sanitizeExtraction = (raw: unknown): unknown => {
+    if (typeof raw !== 'string' || !raw.trim()) return raw
+    let json: any
+    try {
+        const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
+        const start = cleaned.indexOf('{')
+        const end = cleaned.lastIndexOf('}')
+        if (start < 0 || end <= start) return raw
+        json = JSON.parse(cleaned.slice(start, end + 1))
+    } catch {
+        return raw
+    }
+    if (!json || !Array.isArray(json.memory)) return raw
+    const seen = new Set<string>()
+    const memory: any[] = []
+    for (const m of json.memory) {
+        if (!m || typeof m !== 'object') continue
+        if (typeof m.attributed_to === 'string' && m.attributed_to.toLowerCase() === 'assistant') continue
+        const text = cleanFactText(m.text)
+        if (!text || ASSISTANT_FACT_RE.test(text)) continue
+        const key = normText(text)
+        if (seen.has(key)) continue
+        seen.add(key)
+        memory.push({ ...m, text, attributed_to: 'user' })
+    }
+    return JSON.stringify({ ...json, memory })
+}
+
+/** Append the fact rules to the system message of an extraction request (copy; input untouched). */
+export const injectFactRules = (messages: any[]): any[] => {
+    if (!Array.isArray(messages) || !messages.length) return messages
+    const idx = messages.findIndex((m) => m?.role === 'system')
+    if (idx < 0 || typeof messages[idx]?.content !== 'string' || messages[idx].content.includes(CUSTOMER_MEMORY_FACT_RULES)) return messages
+    const copy = messages.slice()
+    copy[idx] = { ...messages[idx], content: `${messages[idx].content}\n\n${CUSTOMER_MEMORY_FACT_RULES}` }
+    return copy
+}
 
 export const normalizeCategory = (v: unknown): FactCategory | null => {
     const s = typeof v === 'string' ? v.trim().toLowerCase() : ''
@@ -236,7 +318,23 @@ export interface ExtractionCapture {
     raw?: string
     /** Injected into the extraction prompt so the model can rewrite (not re-derive) the summary. */
     previousSummary?: string | null
+    /** Token usage of every provider call made inside the capture (LLM + embeddings). */
+    usage?: TokenUsage
 }
+
+export interface TokenUsage {
+    llmCalls: number
+    promptTokens: number
+    completionTokens: number
+    embeddingCalls: number
+    embeddingTokens: number
+}
+
+export const emptyUsage = (): TokenUsage => ({ llmCalls: 0, promptTokens: 0, completionTokens: 0, embeddingCalls: 0, embeddingTokens: 0 })
+
+/** mem0's extraction call is the one whose system prompt is the additive extractor. */
+const isExtractionCall = (messages: any[]): boolean =>
+    Array.isArray(messages) && messages.some((m) => m?.role === 'system' && typeof m.content === 'string' && /Memory Extractor/.test(m.content))
 
 export const SUMMARY_PROMPT_HEADER = '## Current Customer Summary'
 
@@ -266,12 +364,45 @@ export const wrapLlmForCapture = (memory: any) => {
     const orig = llm.generateResponse.bind(llm)
     llm.generateResponse = async (...args: any[]) => {
         const store = extractionCapture.getStore()
+        const extraction = isExtractionCall(args[0])
+        if (extraction) args[0] = injectFactRules(args[0])
         if (store && 'previousSummary' in store) args[0] = injectSummary(args[0], store.previousSummary)
-        const res = await orig(...args)
+        let res = await orig(...args)
+        if (extraction && typeof res === 'string') res = sanitizeExtraction(res)
         if (store && typeof res === 'string') store.raw = res
         return res
     }
     llm.__customerMemoryWrapped = true
+    wrapUsage(memory)
+}
+
+const addUsage = (kind: 'llm' | 'embedding', usage: any) => {
+    const u = extractionCapture.getStore()?.usage
+    if (!u || !usage) return
+    if (kind === 'llm') {
+        u.llmCalls++
+        u.promptTokens += Number(usage.prompt_tokens) || 0
+        u.completionTokens += Number(usage.completion_tokens) || 0
+    } else {
+        u.embeddingCalls++
+        u.embeddingTokens += Number(usage.prompt_tokens ?? usage.total_tokens) || 0
+    }
+}
+
+/** Count tokens of the OpenAI-compatible clients mem0 uses (only inside an extractionCapture with `usage`). */
+const wrapUsage = (memory: any) => {
+    const wrap = (target: any, kind: 'llm' | 'embedding') => {
+        if (!target || typeof target.create !== 'function' || target.__customerMemoryUsage) return
+        const orig = target.create.bind(target)
+        target.create = async (...args: any[]) => {
+            const res = await orig(...args)
+            addUsage(kind, res?.usage)
+            return res
+        }
+        target.__customerMemoryUsage = true
+    }
+    wrap(memory?.llm?.openai?.chat?.completions, 'llm')
+    wrap(memory?.embedder?.openai?.embeddings, 'embedding')
 }
 
 export const getCollectionName = (): string => process.env.CUSTOMER_MEMORY_COLLECTION || CUSTOMER_MEMORY_DEFAULT_COLLECTION

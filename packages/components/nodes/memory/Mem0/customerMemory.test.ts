@@ -1,19 +1,24 @@
 import { AIMessage } from '@langchain/core/messages'
 import {
     buildBackfillMessages,
+    cleanFactText,
+    CUSTOMER_MEMORY_FACT_RULES,
     CUSTOMER_MEMORY_FACTS_HEADER,
+    emptyUsage,
     extractionCapture,
     formatFacts,
+    injectFactRules,
     injectSummary,
     parseCustomerMemoryConfig,
     parseExtractionExtras,
     redactSecrets,
     resolveTag,
     ruleTag,
+    sanitizeExtraction,
     summaryPointId,
     wrapLlmForCapture
 } from './customerMemory'
-import { SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
+import { addCustomerFacts, queueForUser, recallCustomerFacts, SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
 
 describe('parseCustomerMemoryConfig', () => {
     const base = { enabled: true, userId: '12:60123', ownerId: 12, apiKey: 'sk-test-123456' }
@@ -269,6 +274,147 @@ describe('SelfHostedCustomerMemory', () => {
         await m.addChatMessages([{ text: 'q2', type: 'userMessage' }])
         await m.lastAdd
         expect(mem0.saveSummary).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe('fact quality (customer-only, short, no dates, no duplicates)', () => {
+    it('cleans subjects, date stamps and trailing punctuation', () => {
+        expect(cleanFactText('User has 2 kids.')).toBe('Has 2 kids')
+        expect(cleanFactText("Customer's budget is RM500 as of October 2026")).toBe('Budget is RM500')
+        expect(cleanFactText('User is based in Johor Bahru (2026-10-23)')).toBe('Based in Johor Bahru')
+        expect(cleanFactText('Prefers contact after 6pm, as mentioned on October 23, 2026')).toBe('Prefers contact after 6pm')
+        // a date that is part of the fact itself stays
+        expect(cleanFactText('Moving house in December 2026')).toBe('Moving house in December 2026')
+        expect(cleanFactText('   ')).toBe('')
+        expect(cleanFactText(42)).toBe('')
+    })
+
+    it('drops assistant facts, assistant offers and duplicates; keeps tags and summary', () => {
+        const raw = JSON.stringify({
+            memory: [
+                { id: '0', text: 'User has 2 kids', attributed_to: 'user', category: 'family', label: 'Has Kids' },
+                { id: '1', text: 'User was recommended the Basic package', attributed_to: 'user' },
+                { id: '2', text: 'Assistant offered a 10% discount', attributed_to: 'assistant' },
+                { id: '3', text: 'has 2 kids.', attributed_to: 'user' },
+                { id: '4', text: 'Budget RM500 as of October 2026' },
+                { id: '5', text: '' }
+            ],
+            summary: 'Parent of two in JB.'
+        })
+        const out = JSON.parse(sanitizeExtraction('```json\n' + raw + '\n```') as string)
+        expect(out.memory.map((m: any) => m.text)).toEqual(['Has 2 kids', 'Budget RM500'])
+        expect(out.memory[0]).toMatchObject({ category: 'family', label: 'Has Kids', attributed_to: 'user' })
+        expect(out.summary).toBe('Parent of two in JB.')
+        expect(sanitizeExtraction('not json')).toBe('not json')
+        expect(sanitizeExtraction(undefined)).toBeUndefined()
+    })
+
+    it('appends the fact rules to the extraction system prompt only, once', () => {
+        const msgs = [
+            { role: 'system', content: 'You are a Memory Extractor' },
+            { role: 'user', content: 'u' }
+        ]
+        const once = injectFactRules(msgs)
+        expect(once[0].content).toContain(CUSTOMER_MEMORY_FACT_RULES)
+        expect(msgs[0].content).toBe('You are a Memory Extractor')
+        expect(injectFactRules(once)).toBe(once)
+        expect(CUSTOMER_MEMORY_FACT_RULES).toMatch(/NEVER extract what the assistant offered/)
+        expect(CUSTOMER_MEMORY_FACT_RULES).toMatch(/max 8 words/)
+    })
+
+    it('wrapped LLM: rules in, sanitised JSON out, only for the extraction call; usage counted', async () => {
+        const seen: any[] = []
+        const create = jest.fn(async () => ({ usage: { prompt_tokens: 100, completion_tokens: 20 } }))
+        const embCreate = jest.fn(async () => ({ usage: { prompt_tokens: 7, total_tokens: 7 } }))
+        const memory: any = {
+            llm: {
+                openai: { chat: { completions: { create } } },
+                generateResponse: async (m: any[]) => {
+                    seen.push(m)
+                    await memory.llm.openai.chat.completions.create({})
+                    return '{"memory":[{"id":"0","text":"User lives in JB as of October 2026"},{"id":"1","text":"x","attributed_to":"assistant"}]}'
+                }
+            },
+            embedder: { openai: { embeddings: { create: embCreate } } }
+        }
+        wrapLlmForCapture(memory)
+        const cap: any = { usage: emptyUsage() }
+        const res = await extractionCapture.run(cap, async () => {
+            await memory.embedder.openai.embeddings.create({})
+            return memory.llm.generateResponse([
+                { role: 'system', content: 'You are a Memory Extractor' },
+                { role: 'user', content: 'u' }
+            ])
+        })
+        expect(JSON.parse(res).memory).toEqual([{ id: '0', text: 'Lives in JB', attributed_to: 'user' }])
+        expect(seen[0][0].content).toContain(CUSTOMER_MEMORY_FACT_RULES)
+        expect(cap.usage).toEqual({ llmCalls: 1, promptTokens: 100, completionTokens: 20, embeddingCalls: 1, embeddingTokens: 7 })
+
+        // non-extraction calls pass through untouched
+        const other = await memory.llm.generateResponse([{ role: 'system', content: 'something else' }])
+        expect(JSON.parse(other).memory).toHaveLength(2)
+        expect(seen[1][0].content).toBe('something else')
+    })
+})
+
+describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the agentflow endpoints)', () => {
+    const cfg: any = { userId: '7:abc', ownerId: 7, salesmanId: '509', apiKey: 'k', baseUrl: 'b', llmModel: 'm', embeddingModel: 'e', backfill: false }
+
+    it('returns tagged facts, the new summary and usage', async () => {
+        const mem0: any = {
+            llm: {
+                generateResponse: async () =>
+                    '{"memory":[{"id":"0","text":"Budget RM500","category":"budget","label":"Budget RM500"}],"summary":"Parent, RM500 budget."}'
+            },
+            search: jest.fn(),
+            getAll: jest.fn(),
+            add: jest.fn(async (_m: any, opts: any) => {
+                expect(opts.metadata).toEqual({ source: 'flowise-agentflow', chatflow_id: 'tp3', owner_id: 7, ownerId: 7, salesmanId: '509', session_id: 's' })
+                await mem0.llm.generateResponse([{ role: 'system', content: 'You are a Memory Extractor' }])
+                return { results: [{ id: 'f1', memory: 'Budget RM500' }] }
+            }),
+            setPayload: jest.fn(async () => undefined),
+            getSummary: jest.fn(async () => null),
+            saveSummary: jest.fn(async () => undefined)
+        }
+        wrapLlmForCapture(mem0)
+        const r = await addCustomerFacts(mem0, cfg, [{ role: 'user', content: 'my budget is RM500' }], { chatflowId: 'tp3', sessionId: 's', source: 'flowise-agentflow' }, jest.fn())
+        expect(r.added).toEqual([{ id: 'f1', memory: 'Budget RM500', category: 'budget', label: 'Budget RM500' }])
+        expect(r.summary).toBe('Parent, RM500 budget.')
+        expect(mem0.setPayload).toHaveBeenCalledWith(['f1'], { category: 'budget', label: 'Budget RM500' })
+        expect(mem0.saveSummary).toHaveBeenCalledWith('7:abc', 'Parent, RM500 budget.', { owner_id: 7, salesmanId: '509' })
+    })
+
+    it('recall ranks without a score cutoff and builds the prompt block with the summary', async () => {
+        const mem0: any = {
+            search: jest.fn(async () => ({ results: [{ id: 'a', memory: 'Has 2 kids', metadata: { category: 'family', label: 'Has Kids' } }] })),
+            getAll: jest.fn(async () => ({ results: [] })),
+            add: jest.fn(),
+            getSummary: jest.fn(async () => 'Parent of two.')
+        }
+        const r = await recallCustomerFacts(mem0, cfg, 'what suits me?', 15)
+        expect(mem0.search).toHaveBeenCalledWith('what suits me?', { topK: 15, threshold: 0, filters: { user_id: '7:abc' } })
+        expect(r.facts).toEqual([{ id: 'a', memory: 'Has 2 kids', category: 'family', label: 'Has Kids' }])
+        expect(r.text).toBe(`${CUSTOMER_MEMORY_FACTS_HEADER}\n- Has 2 kids\nAt a glance: Parent of two.`)
+        const empty = await recallCustomerFacts(mem0, cfg, '', 15)
+        expect(mem0.getAll).toHaveBeenCalled()
+        expect(empty.text).toBe('')
+    })
+
+    it('queueForUser runs jobs for one user in order, even after a failure', async () => {
+        const order: string[] = []
+        const slow = queueForUser('u', async () => {
+            await new Promise((r) => setTimeout(r, 20))
+            order.push('a')
+            throw new Error('boom')
+        })
+        const fast = queueForUser('u', async () => {
+            order.push('b')
+            return 2
+        })
+        await expect(slow).rejects.toThrow('boom')
+        await expect(fast).resolves.toBe(2)
+        expect(order).toEqual(['a', 'b'])
     })
 })
 
