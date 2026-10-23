@@ -102,7 +102,8 @@ class Mem0_Memory implements INode {
                 label: 'Backfill Messages',
                 name: 'backfillMessages',
                 type: 'number',
-                description: 'Self-hosted only. When backfill=true and the customer has no memories yet, how many past session messages to feed on the first add().',
+                description:
+                    'Self-hosted only. When backfill=true and the customer has no memories yet, how many past session messages to feed on the first add().',
                 default: 50,
                 optional: true,
                 additionalParams: true,

@@ -73,7 +73,10 @@ const qdrant = async (method: string, path: string, body?: any, allow404 = false
     if (res.status === 404 && allow404) return null
     if (!res.ok) {
         const text = await res.text().catch(() => '')
-        throw new InternalFlowiseError(StatusCodes.BAD_GATEWAY, `Qdrant ${method} ${path.split('?')[0]} failed: ${res.status} ${text.slice(0, 300)}`)
+        throw new InternalFlowiseError(
+            StatusCodes.BAD_GATEWAY,
+            `Qdrant ${method} ${path.split('?')[0]} failed: ${res.status} ${text.slice(0, 300)}`
+        )
     }
     const json: any = await res.json()
     return json?.result
@@ -85,7 +88,12 @@ const collectionPath = (name = getCollectionName()) => `/collections/${encodeURI
 const ownerCondition = (ownerId: string) => {
     const n = Number(ownerId)
     if (ownerId.trim() !== '' && Number.isInteger(n)) {
-        return { should: [{ key: 'owner_id', match: { value: n } }, { key: 'owner_id', match: { value: ownerId } }] }
+        return {
+            should: [
+                { key: 'owner_id', match: { value: n } },
+                { key: 'owner_id', match: { value: ownerId } }
+            ]
+        }
     }
     return { must: [{ key: 'owner_id', match: { value: ownerId } }] }
 }
@@ -150,9 +158,7 @@ const getFacts = async (userId: string): Promise<CustomerMemoryFactsResult> => {
             true
         )
     ])
-    const facts = points
-        .map(toFact)
-        .sort((a, b) => (b.updated_at ?? b.created_at ?? '').localeCompare(a.updated_at ?? a.created_at ?? ''))
+    const facts = points.map(toFact).sort((a, b) => (b.updated_at ?? b.created_at ?? '').localeCompare(a.updated_at ?? a.created_at ?? ''))
     const sp = summaryPoints?.points?.[0]?.payload ?? {}
     return {
         facts,
@@ -214,7 +220,12 @@ const deleteAllFacts = async (userId: string): Promise<{ deleted: number }> => {
         await qdrant('POST', `${collectionPath()}/points/delete?wait=true`, { filter: userFilter(userId) }, true)
     }
     // mem0 also links entities per user in `<collection>_entities`; purge those too (PDPA "forget").
-    await qdrant('POST', `${collectionPath(`${getCollectionName()}_entities`)}/points/delete?wait=true`, { filter: userFilter(userId) }, true)
+    await qdrant(
+        'POST',
+        `${collectionPath(`${getCollectionName()}_entities`)}/points/delete?wait=true`,
+        { filter: userFilter(userId) },
+        true
+    )
     // ...and the stored at-a-glance summary.
     await qdrant('POST', `${collectionPath(getSummaryCollectionName())}/points/delete?wait=true`, { filter: userFilter(userId) }, true)
     return { deleted: points.length }
@@ -222,7 +233,8 @@ const deleteAllFacts = async (userId: string): Promise<{ deleted: number }> => {
 
 const deleteFact = async (userId: string, memoryId: string): Promise<{ deleted: number }> => {
     validateUserId(userId)
-    if (!memoryId || !/^[0-9a-fA-F-]{1,64}$|^\d+$/.test(memoryId)) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid memoryId')
+    if (!memoryId || !/^[0-9a-fA-F-]{1,64}$|^\d+$/.test(memoryId))
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'Invalid memoryId')
     const id = /^\d+$/.test(memoryId) ? Number(memoryId) : memoryId
     const result = await qdrant('POST', `${collectionPath()}/points`, { ids: [id], with_payload: ['user_id'], with_vector: false }, true)
     const point = Array.isArray(result) ? result[0] : undefined

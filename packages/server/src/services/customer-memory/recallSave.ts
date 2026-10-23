@@ -50,11 +50,17 @@ export const toMessages = (body: any): Mem0ChatMessage[] => {
     }
     const out: Mem0ChatMessage[] = []
     for (const m of list.slice(-MAX_MESSAGES)) {
-        const role = m?.role === 'assistant' || m?.role === 'apiMessage' || m?.role === 'ai' ? 'assistant' : m?.role === 'user' || m?.role === 'userMessage' || m?.role === 'human' ? 'user' : null
+        const role =
+            m?.role === 'assistant' || m?.role === 'apiMessage' || m?.role === 'ai'
+                ? 'assistant'
+                : m?.role === 'user' || m?.role === 'userMessage' || m?.role === 'human'
+                ? 'user'
+                : null
         const content = typeof m?.content === 'string' ? m.content.trim().slice(0, MAX_MESSAGE_CHARS) : ''
         if (role && content) out.push({ role, content })
     }
-    if (!out.some((m) => m.role === 'user')) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'messages must contain at least one user message')
+    if (!out.some((m) => m.role === 'user'))
+        throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'messages must contain at least one user message')
     return out
 }
 
@@ -97,9 +103,19 @@ export const save = async (
 }
 
 /** Fire-and-forget variant: never rejects, logs instead. */
-export const saveInBackground = (cfg: CustomerMemoryConfig, messages: Mem0ChatMessage[], ctx: { chatflowId?: string; sessionId?: string; source?: string }) => {
-    void save(cfg, messages, ctx).catch((e) => logger.warn(`[CustomerMemory] user=${cfg.userId} background save failed: ${redactSecrets(e?.message ?? e)}`))
+export const saveInBackground = (
+    cfg: CustomerMemoryConfig,
+    messages: Mem0ChatMessage[],
+    ctx: { chatflowId?: string; sessionId?: string; source?: string }
+) => {
+    void save(cfg, messages, ctx).catch((e) =>
+        logger.warn(`[CustomerMemory] user=${cfg.userId} background save failed: ${redactSecrets(e?.message ?? e)}`)
+    )
 }
 
 const cleanId = (v: unknown, max = 256): string | undefined => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined)
-export const toContext = (body: any, source: string) => ({ chatflowId: cleanId(body?.chatflowId), sessionId: cleanId(body?.sessionId), source })
+export const toContext = (body: any, source: string) => ({
+    chatflowId: cleanId(body?.chatflowId),
+    sessionId: cleanId(body?.sessionId),
+    source
+})

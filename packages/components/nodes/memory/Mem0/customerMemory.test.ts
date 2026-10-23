@@ -221,7 +221,10 @@ describe('SelfHostedCustomerMemory', () => {
     })
 
     it('tags newly added facts with category/label from the same extraction response (no extra LLM call)', async () => {
-        const gen = jest.fn(async () => '{"memory":[{"id":"0","text":"Wants a family package","category":"interest","label":"Family package"},{"id":"1","text":"Has 3 kids"}]}')
+        const gen = jest.fn(
+            async () =>
+                '{"memory":[{"id":"0","text":"Wants a family package","category":"interest","label":"Family package"},{"id":"1","text":"Has 3 kids"}]}'
+        )
         const llm = { generateResponse: gen }
         const mem0: any = {
             llm,
@@ -229,7 +232,12 @@ describe('SelfHostedCustomerMemory', () => {
             getAll: jest.fn(async () => ({ results: [{ id: 'x' }] })),
             add: jest.fn(async () => {
                 await mem0.llm.generateResponse([])
-                return { results: [{ id: 'f1', memory: 'Wants a family package' }, { id: 'f2', memory: 'Has 3 kids' }] }
+                return {
+                    results: [
+                        { id: 'f1', memory: 'Wants a family package' },
+                        { id: 'f2', memory: 'Has 3 kids' }
+                    ]
+                }
             }),
             setPayload: jest.fn(async () => undefined)
         }
@@ -247,8 +255,8 @@ describe('SelfHostedCustomerMemory', () => {
 
     it('rewrites the summary in the same extraction call only when new facts were added', async () => {
         const gen = jest.fn(async (msgs: any[]) => {
-                expect(msgs[1].content).toContain('## Current Customer Summary\nOld summary')
-                return '{"memory":[{"id":"0","text":"Budget RM500k","category":"budget","label":"Budget RM500k"}],"summary":"Buyer with RM500k budget."}'
+            expect(msgs[1].content).toContain('## Current Customer Summary\nOld summary')
+            return '{"memory":[{"id":"0","text":"Budget RM500k","category":"budget","label":"Budget RM500k"}],"summary":"Buyer with RM500k budget."}'
         })
         const llm = { generateResponse: gen }
         const results = [{ id: 'f1', memory: 'Budget RM500k' }]
@@ -257,7 +265,10 @@ describe('SelfHostedCustomerMemory', () => {
             search: jest.fn(),
             getAll: jest.fn(async () => ({ results: [{ id: 'x' }] })),
             add: jest.fn(async () => {
-                await mem0.llm.generateResponse([{ role: 'system', content: 's' }, { role: 'user', content: 'u' }])
+                await mem0.llm.generateResponse([
+                    { role: 'system', content: 's' },
+                    { role: 'user', content: 'u' }
+                ])
                 return { results }
             }),
             setPayload: jest.fn(async () => undefined),
@@ -359,7 +370,16 @@ describe('fact quality (customer-only, short, no dates, no duplicates)', () => {
 })
 
 describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the agentflow endpoints)', () => {
-    const cfg: any = { userId: '7:abc', ownerId: 7, salesmanId: '509', apiKey: 'k', baseUrl: 'b', llmModel: 'm', embeddingModel: 'e', backfill: false }
+    const cfg: any = {
+        userId: '7:abc',
+        ownerId: 7,
+        salesmanId: '509',
+        apiKey: 'k',
+        baseUrl: 'b',
+        llmModel: 'm',
+        embeddingModel: 'e',
+        backfill: false
+    }
 
     it('returns tagged facts, the new summary and usage', async () => {
         const mem0: any = {
@@ -370,7 +390,14 @@ describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the
             search: jest.fn(),
             getAll: jest.fn(),
             add: jest.fn(async (_m: any, opts: any) => {
-                expect(opts.metadata).toEqual({ source: 'flowise-agentflow', chatflow_id: 'tp3', owner_id: 7, ownerId: 7, salesmanId: '509', session_id: 's' })
+                expect(opts.metadata).toEqual({
+                    source: 'flowise-agentflow',
+                    chatflow_id: 'tp3',
+                    owner_id: 7,
+                    ownerId: 7,
+                    salesmanId: '509',
+                    session_id: 's'
+                })
                 await mem0.llm.generateResponse([{ role: 'system', content: 'You are a Memory Extractor' }])
                 return { results: [{ id: 'f1', memory: 'Budget RM500' }] }
             }),
@@ -379,7 +406,13 @@ describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the
             saveSummary: jest.fn(async () => undefined)
         }
         wrapLlmForCapture(mem0)
-        const r = await addCustomerFacts(mem0, cfg, [{ role: 'user', content: 'my budget is RM500' }], { chatflowId: 'tp3', sessionId: 's', source: 'flowise-agentflow' }, jest.fn())
+        const r = await addCustomerFacts(
+            mem0,
+            cfg,
+            [{ role: 'user', content: 'my budget is RM500' }],
+            { chatflowId: 'tp3', sessionId: 's', source: 'flowise-agentflow' },
+            jest.fn()
+        )
         expect(r.added).toEqual([{ id: 'f1', memory: 'Budget RM500', category: 'budget', label: 'Budget RM500' }])
         expect(r.summary).toBe('Parent, RM500 budget.')
         expect(mem0.setPayload).toHaveBeenCalledWith(['f1'], { category: 'budget', label: 'Budget RM500' })
@@ -388,7 +421,9 @@ describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the
 
     it('recall ranks without a score cutoff and builds the prompt block with the summary', async () => {
         const mem0: any = {
-            search: jest.fn(async () => ({ results: [{ id: 'a', memory: 'Has 2 kids', metadata: { category: 'family', label: 'Has Kids' } }] })),
+            search: jest.fn(async () => ({
+                results: [{ id: 'a', memory: 'Has 2 kids', metadata: { category: 'family', label: 'Has Kids' } }]
+            })),
             getAll: jest.fn(async () => ({ results: [] })),
             add: jest.fn(),
             getSummary: jest.fn(async () => 'Parent of two.')
@@ -429,7 +464,10 @@ describe('embedding dimensions', () => {
 
 describe('summary helpers', () => {
     it('injects the previous summary into the last user message without mutating input', () => {
-        const msgs = [{ role: 'system', content: 's' }, { role: 'user', content: 'u' }]
+        const msgs = [
+            { role: 'system', content: 's' },
+            { role: 'user', content: 'u' }
+        ]
         const out = injectSummary(msgs, null)
         expect(out[1].content).toBe('u\n\n## Current Customer Summary\n(none yet)')
         expect(msgs[1].content).toBe('u')

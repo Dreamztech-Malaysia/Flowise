@@ -118,10 +118,7 @@ export interface Mem0ChatMessage {
 }
 
 /** Map Flowise chat_message rows (oldest first) to mem0 messages, dropping the turn currently being saved. */
-export const buildBackfillMessages = (
-    rows: { role: string; content: string }[],
-    current: Mem0ChatMessage[]
-): Mem0ChatMessage[] => {
+export const buildBackfillMessages = (rows: { role: string; content: string }[], current: Mem0ChatMessage[]): Mem0ChatMessage[] => {
     const mapped: Mem0ChatMessage[] = rows
         .filter((r) => typeof r?.content === 'string' && r.content.trim())
         .map((r) => ({ role: r.role === 'userMessage' ? 'user' : 'assistant', content: r.content }))
@@ -140,7 +137,7 @@ export const buildBackfillMessages = (
 // ---------------------------------------------------------------------------------------------------------
 
 export const FACT_CATEGORIES = ['interest', 'objection', 'budget', 'location', 'timing', 'family', 'other'] as const
-export type FactCategory = (typeof FACT_CATEGORIES)[number]
+export type FactCategory = typeof FACT_CATEGORIES[number]
 export interface FactTag {
     category: FactCategory
     label: string
@@ -174,10 +171,14 @@ export const CUSTOMER_MEMORY_FACT_RULES = [
     '- If the customer stated nothing new about themselves, return {"memory": []}.'
 ].join('\n')
 
-const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+const MONTH =
+    '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
 const DATE = `(?:\\d{4}-\\d{2}-\\d{2}|(?:early |mid[- ]|late )?${MONTH}\\.?(?: \\d{1,2}(?:st|nd|rd|th)?,?)? \\d{4}|\\d{1,2}(?:st|nd|rd|th)? ${MONTH}\\.?,? \\d{4})`
 /** "as of October 2026", "as mentioned on 2026-10-23", "(2026-10-23)" -- stamps, not facts */
-const DATE_STAMP_RE = new RegExp(`[,(]?\\s*\\b(?:as of|as at|as mentioned (?:on|in)|mentioned (?:on|in)|stated (?:on|in)|noted (?:on|in)|reported (?:on|in))\\s+${DATE}\\)?|\\(\\s*${DATE}\\s*\\)`, 'gi')
+const DATE_STAMP_RE = new RegExp(
+    `[,(]?\\s*\\b(?:as of|as at|as mentioned (?:on|in)|mentioned (?:on|in)|stated (?:on|in)|noted (?:on|in)|reported (?:on|in))\\s+${DATE}\\)?|\\(\\s*${DATE}\\s*\\)`,
+    'gi'
+)
 const SUBJECT_RE = /^(?:the\s+)?(?:user|customer|client|lead)(?:'s|’s)?\s+/i
 const ASSISTANT_FACT_RE =
     /^(?:was|were|has been|have been)\s+(?:recommended|offered|told|informed|advised|quoted|sent|given)\b|\b(?:assistant|ai|agent|salesman|bot)\s+(?:recommended|offered|suggested|said|quoted|promised|explained)\b/i
@@ -186,7 +187,11 @@ const ASSISTANT_FACT_RE =
 export const cleanFactText = (text: unknown): string => {
     if (typeof text !== 'string') return ''
     let s = text.replace(/\s+/g, ' ').trim()
-    s = s.replace(DATE_STAMP_RE, '').replace(/\s+([,.;])/g, '$1').replace(/\s{2,}/g, ' ').trim()
+    s = s
+        .replace(DATE_STAMP_RE, '')
+        .replace(/\s+([,.;])/g, '$1')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
     const stripped = s.replace(SUBJECT_RE, '')
     if (stripped && stripped !== s) {
         // "User is ..." -> "Is ..." reads badly; drop a leading copula too
@@ -246,7 +251,10 @@ export const normalizeCategory = (v: unknown): FactCategory | null => {
 
 export const normalizeLabel = (v: unknown): string | null => {
     if (typeof v !== 'string') return null
-    const s = v.replace(/\s+/g, ' ').replace(/^[\s"'.:-]+|[\s"'.:-]+$/g, '').trim()
+    const s = v
+        .replace(/\s+/g, ' ')
+        .replace(/^[\s"'.:-]+|[\s"'.:-]+$/g, '')
+        .trim()
     if (!s) return null
     const short = s.length > 48 ? s.slice(0, 48).trim() : s
     return short.charAt(0).toUpperCase() + short.slice(1)
@@ -257,11 +265,31 @@ const CATEGORY_RULES: { category: FactCategory; label: string; re: RegExp }[] = 
     { category: 'objection', label: 'Price Too High', re: /\b(too (expensive|pricey|costly)|price (is )?too high|can'?t afford|mahal)\b/i },
     { category: 'objection', label: 'Not Interested', re: /\b(not interested|no longer interested|tak (nak|mahu)|declined?)\b/i },
     { category: 'objection', label: 'Has Concerns', re: /\b(concern(ed)?|worried|hesitant|doubt|complain(ed|t)?|unhappy|objection)\b/i },
-    { category: 'budget', label: 'Budget', re: /\b(budget|afford|rm ?\d|\$ ?\d|usd|myr|price range|loan|financing|installment|down ?payment)\b/i },
-    { category: 'family', label: 'Family', re: /\b(wife|husband|spouse|kids?|children|child|son|daughter|family|parents?|married|baby)\b/i },
-    { category: 'timing', label: 'Timing', re: /\b(next (week|month|year)|this (week|month|year)|tomorrow|today|soon|asap|urgent|by (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|deadline|\d{4}-\d{2}-\d{2}|q[1-4])\b/i },
-    { category: 'location', label: 'Location', re: /\b(lives? in|located|based in|area|city|town|near|address|kuala lumpur|kl|selangor|penang|johor|singapore)\b/i },
-    { category: 'interest', label: 'Interest', re: /\b(interested|wants?|looking for|prefers?|likes?|asked about|enquir|inquir|considering|keen)\b/i }
+    {
+        category: 'budget',
+        label: 'Budget',
+        re: /\b(budget|afford|rm ?\d|\$ ?\d|usd|myr|price range|loan|financing|installment|down ?payment)\b/i
+    },
+    {
+        category: 'family',
+        label: 'Family',
+        re: /\b(wife|husband|spouse|kids?|children|child|son|daughter|family|parents?|married|baby)\b/i
+    },
+    {
+        category: 'timing',
+        label: 'Timing',
+        re: /\b(next (week|month|year)|this (week|month|year)|tomorrow|today|soon|asap|urgent|by (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|deadline|\d{4}-\d{2}-\d{2}|q[1-4])\b/i
+    },
+    {
+        category: 'location',
+        label: 'Location',
+        re: /\b(lives? in|located|based in|area|city|town|near|address|kuala lumpur|kl|selangor|penang|johor|singapore)\b/i
+    },
+    {
+        category: 'interest',
+        label: 'Interest',
+        re: /\b(interested|wants?|looking for|prefers?|likes?|asked about|enquir|inquir|considering|keen)\b/i
+    }
 ]
 
 export const ruleTag = (text: string): FactTag => {
@@ -334,7 +362,8 @@ export const emptyUsage = (): TokenUsage => ({ llmCalls: 0, promptTokens: 0, com
 
 /** mem0's extraction call is the one whose system prompt is the additive extractor. */
 const isExtractionCall = (messages: any[]): boolean =>
-    Array.isArray(messages) && messages.some((m) => m?.role === 'system' && typeof m.content === 'string' && /Memory Extractor/.test(m.content))
+    Array.isArray(messages) &&
+    messages.some((m) => m?.role === 'system' && typeof m.content === 'string' && /Memory Extractor/.test(m.content))
 
 export const SUMMARY_PROMPT_HEADER = '## Current Customer Summary'
 
@@ -344,7 +373,10 @@ export const injectSummary = (messages: any[], previousSummary: string | null | 
     const idx = messages.map((m) => m?.role).lastIndexOf('user')
     if (idx < 0 || typeof messages[idx]?.content !== 'string') return messages
     const copy = messages.slice()
-    copy[idx] = { ...messages[idx], content: `${messages[idx].content}\n\n${SUMMARY_PROMPT_HEADER}\n${previousSummary?.trim() || '(none yet)'}` }
+    copy[idx] = {
+        ...messages[idx],
+        content: `${messages[idx].content}\n\n${SUMMARY_PROMPT_HEADER}\n${previousSummary?.trim() || '(none yet)'}`
+    }
     return copy
 }
 
@@ -449,7 +481,9 @@ const MAX_CACHED_INSTANCES = 200
 const instanceCache = new Map<string, Mem0Like>()
 
 const cacheKey = (cfg: CustomerMemoryConfig) =>
-    createHash('sha256').update([cfg.apiKey, cfg.baseUrl, cfg.llmModel, cfg.embeddingModel, getCollectionName()].join('\u0000')).digest('hex')
+    createHash('sha256')
+        .update([cfg.apiKey, cfg.baseUrl, cfg.llmModel, cfg.embeddingModel, getCollectionName()].join('\u0000'))
+        .digest('hex')
 
 /**
  * One Memory per (customer key, baseUrl, models). The key only lives in memory and is hashed for the cache key.
@@ -525,7 +559,13 @@ export const getMem0Instance = async (cfg: CustomerMemoryConfig): Promise<Mem0Li
         await ensureSummaryCollection()
         await client.upsert(summaryCollection, {
             wait: true,
-            points: [{ id: summaryPointId(userId), vector: [1], payload: { ...payload, user_id: userId, summary, updatedAt: new Date().toISOString() } }]
+            points: [
+                {
+                    id: summaryPointId(userId),
+                    vector: [1],
+                    payload: { ...payload, user_id: userId, summary, updatedAt: new Date().toISOString() }
+                }
+            ]
         })
     }
 

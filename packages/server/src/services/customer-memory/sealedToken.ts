@@ -22,7 +22,10 @@ export const SEALED_MAX_TTL_S = 24 * 3600
 const key = (): Buffer => {
     const secret = process.env.CUSTOMER_MEMORY_TOKEN_SECRET
     if (!secret || secret.length < 16) {
-        throw new InternalFlowiseError(StatusCodes.SERVICE_UNAVAILABLE, 'Sealed customer memory is not configured (CUSTOMER_MEMORY_TOKEN_SECRET)')
+        throw new InternalFlowiseError(
+            StatusCodes.SERVICE_UNAVAILABLE,
+            'Sealed customer memory is not configured (CUSTOMER_MEMORY_TOKEN_SECRET)'
+        )
     }
     return createHash('sha256').update(secret).digest()
 }

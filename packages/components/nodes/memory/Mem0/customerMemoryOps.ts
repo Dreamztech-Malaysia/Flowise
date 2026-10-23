@@ -143,7 +143,12 @@ export interface RecallResult {
 }
 
 /** Facts most relevant to `query` (all facts ranked; no score cutoff) + stored summary. Throws on provider errors. */
-export const recallCustomerFacts = async (mem0: Mem0Like, cfg: CustomerMemoryConfig, query: string, limit: number): Promise<RecallResult> => {
+export const recallCustomerFacts = async (
+    mem0: Mem0Like,
+    cfg: CustomerMemoryConfig,
+    query: string,
+    limit: number
+): Promise<RecallResult> => {
     const capture: ExtractionCapture = { usage: emptyUsage() }
     const filters = { user_id: cfg.userId }
     const res = await extractionCapture.run(capture, () =>

@@ -63,7 +63,14 @@ describe('recall/save service', () => {
             { role: 'user', content: 'I have 2 kids' },
             { role: 'assistant', content: 'Nice!' }
         ])
-        expect(toMessages({ messages: [{ role: 'userMessage', content: 'a' }, { role: 'system', content: 'x' }] })).toEqual([{ role: 'user', content: 'a' }])
+        expect(
+            toMessages({
+                messages: [
+                    { role: 'userMessage', content: 'a' },
+                    { role: 'system', content: 'x' }
+                ]
+            })
+        ).toEqual([{ role: 'user', content: 'a' }])
     })
 
     it('recall returns facts + text; provider errors become 502 without the key', async () => {
@@ -87,8 +94,17 @@ describe('recall/save service', () => {
     it('save adds with agentflow metadata', async () => {
         const add = jest.fn(async () => ({ results: [{ id: 'f1', memory: 'Budget RM500' }] }))
         __setMem0Factory(async () => ({ search: async () => ({ results: [] }), getAll: async () => ({ results: [] }), add }))
-        const r = await save(toConfig(cm), [{ role: 'user', content: 'budget RM500' }], { chatflowId: 'tp3', sessionId: 's', source: 'flowise-agentflow' })
+        const r = await save(toConfig(cm), [{ role: 'user', content: 'budget RM500' }], {
+            chatflowId: 'tp3',
+            sessionId: 's',
+            source: 'flowise-agentflow'
+        })
         expect(r.added).toEqual([{ id: 'f1', memory: 'Budget RM500', category: 'budget', label: 'Budget' }])
-        expect((add.mock.calls[0] as any[])[1].metadata).toMatchObject({ source: 'flowise-agentflow', chatflow_id: 'tp3', owner_id: 211, salesmanId: '509' })
+        expect((add.mock.calls[0] as any[])[1].metadata).toMatchObject({
+            source: 'flowise-agentflow',
+            chatflow_id: 'tp3',
+            owner_id: 211,
+            salesmanId: '509'
+        })
     })
 })

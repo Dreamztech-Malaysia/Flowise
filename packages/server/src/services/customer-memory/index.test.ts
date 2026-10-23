@@ -14,7 +14,7 @@ describe('customer-memory service', () => {
         delete process.env.QDRANT_API_KEY
     })
 
-    const ok = (result: any) => ({ ok: true, status: 200, json: async () => ({ result }), text: async () => '' }) as any
+    const ok = (result: any) => ({ ok: true, status: 200, json: async () => ({ result }), text: async () => '' } as any)
 
     it('maps a mem0 payload to the public fact shape', () => {
         const f = toFact({
@@ -79,7 +79,10 @@ describe('customer-memory service', () => {
         global.fetch = jest.fn(async (url: string) =>
             url.includes('_summaries')
                 ? ok({ points: [{ id: 's', payload: { summary: 'Family buyer.', updatedAt: '2026-10-03T00:00:00Z' } }] })
-                : ok({ points: [{ id: 'f1', payload: { data: 'Has kids', user_id: '7:a', category: 'family', label: 'Family' } }], next_page_offset: null })
+                : ok({
+                      points: [{ id: 'f1', payload: { data: 'Has kids', user_id: '7:a', category: 'family', label: 'Family' } }],
+                      next_page_offset: null
+                  })
         ) as any
         const r = await customerMemoryService.getFacts('7:a')
         expect(r.summary).toBe('Family buyer.')
@@ -108,8 +111,26 @@ describe('customer-memory service', () => {
         const fetchMock = jest.fn(async (_url: string, _init: any) =>
             ok({
                 points: [
-                    { id: 1, payload: { user_id: '7:a', salesmanId: 's1', category: 'objection', label: 'Price Too High', createdAt: '2026-10-20T10:00:00Z' } },
-                    { id: 2, payload: { user_id: '7:a', salesmanId: 's1', category: 'objection', label: 'Price Too High', createdAt: '2026-10-22T10:00:00Z' } },
+                    {
+                        id: 1,
+                        payload: {
+                            user_id: '7:a',
+                            salesmanId: 's1',
+                            category: 'objection',
+                            label: 'Price Too High',
+                            createdAt: '2026-10-20T10:00:00Z'
+                        }
+                    },
+                    {
+                        id: 2,
+                        payload: {
+                            user_id: '7:a',
+                            salesmanId: 's1',
+                            category: 'objection',
+                            label: 'Price Too High',
+                            createdAt: '2026-10-22T10:00:00Z'
+                        }
+                    },
                     { id: 3, payload: { user_id: '7:b', createdAt: '2026-10-14T00:00:00Z' } },
                     { id: 4, payload: { user_id: '7:b', category: 'budget', label: 'Budget', createdAt: '2026-09-01T00:00:00Z' } }
                 ],

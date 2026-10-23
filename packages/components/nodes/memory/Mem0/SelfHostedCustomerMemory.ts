@@ -40,7 +40,6 @@ export interface SelfHostedCustomerMemoryInput {
     mem0Factory?: (cfg: CustomerMemoryConfig) => Promise<Mem0Like>
 }
 
-
 /**
  * Mem0 "Self-hosted" mode.
  *
@@ -186,9 +185,7 @@ export class SelfHostedCustomerMemory extends FlowiseMemory implements MemoryMet
         if (!current.length) return
 
         const prev = userQueues.get(cfg.userId) ?? Promise.resolve()
-        const job = prev
-            .then(() => this.runAdd(cfg, current, sessionId))
-            .catch((e) => this.warn('add failed (reply unaffected)', e))
+        const job = prev.then(() => this.runAdd(cfg, current, sessionId)).catch((e) => this.warn('add failed (reply unaffected)', e))
         userQueues.set(cfg.userId, job)
         void job.finally(() => {
             if (userQueues.get(cfg.userId) === job) userQueues.delete(cfg.userId)
