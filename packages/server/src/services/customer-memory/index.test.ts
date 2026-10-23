@@ -5,6 +5,8 @@ describe('customer-memory service', () => {
     beforeEach(() => {
         process.env.QDRANT_URL = 'http://qdrant.test:6333/'
         process.env.QDRANT_API_KEY = 'qk'
+        // a deployment .env may set another collection; these tests assert the default name
+        delete process.env.CUSTOMER_MEMORY_COLLECTION
     })
     afterEach(() => {
         global.fetch = realFetch

@@ -10,6 +10,8 @@ export const WHITELIST_URLS = [
     '/api/v1/public-chatbotConfig',
     '/api/v1/public-executions',
     '/api/v1/prediction/',
+    // Dreamztech fork: auth is the AES-GCM sealed token in the body (CUSTOMER_MEMORY_TOKEN_SECRET), not an API key
+    '/api/v1/customer-memory/sealed/',
     '/api/v1/webhook/',
     '/api/v1/chatmessage/abort',
     '/api/v1/node-icon/',

@@ -6,22 +6,19 @@ import { mapChatMessageToBaseMessage } from '../../../src/utils'
 import {
     buildBackfillMessages,
     CustomerMemoryConfig,
-    ExtractionCapture,
-    extractionCapture,
-    ExtractionExtras,
     formatFacts,
     getMem0Instance,
     Mem0ChatMessage,
     Mem0Like,
     parseCustomerMemoryConfig,
-    parseExtractionExtras,
     redactSecrets,
-    resolveTag,
     withTimeout
 } from './customerMemory'
+import { addCustomerFacts, RECALL_THRESHOLD, RECALL_TIMEOUT_MS, userQueues } from './customerMemoryOps'
 
-const RECALL_TIMEOUT_MS = 8000
-const RECALL_THRESHOLD = 0
+export { addCustomerFacts, queueForUser, recallCustomerFacts } from './customerMemoryOps'
+export type { AddCustomerFactsResult, AddedFact, RecallResult } from './customerMemoryOps'
+
 const MAX_MESSAGE_CHARS = 4000
 
 export interface SelfHostedCustomerMemoryInput {
@@ -43,8 +40,6 @@ export interface SelfHostedCustomerMemoryInput {
     mem0Factory?: (cfg: CustomerMemoryConfig) => Promise<Mem0Like>
 }
 
-/** Serialises add() per mem0 user so two quick messages cannot both run the backfill. */
-const userQueues = new Map<string, Promise<void>>()
 
 /**
  * Mem0 "Self-hosted" mode.
@@ -221,62 +216,6 @@ export class SelfHostedCustomerMemory extends FlowiseMemory implements MemoryMet
             }
         }
 
-        const metadata: Record<string, any> = { source: 'flowise', chatflow_id: this.chatflowid }
-        // owner_id (snake) is what the server filters on; ownerId/salesmanId (camel) are the reporting keys.
-        if (cfg.ownerId !== undefined) {
-            metadata.owner_id = cfg.ownerId
-            metadata.ownerId = cfg.ownerId
-        }
-        if (cfg.salesmanId !== undefined) metadata.salesmanId = cfg.salesmanId
-        if (sessionId) metadata.session_id = sessionId
-
-        const capture: ExtractionCapture = {}
-        if (mem0.getSummary) {
-            try {
-                capture.previousSummary = await mem0.getSummary(cfg.userId)
-            } catch (e) {
-                this.warn('summary lookup failed', e)
-                capture.previousSummary = null
-            }
-        }
-        const res = await extractionCapture.run(capture, () => mem0.add(messages, { userId: cfg.userId, metadata }))
-        const added: { id: string; memory: string }[] = (res?.results ?? []).filter(
-            (r: any) => r && typeof r.id === 'string' && typeof r.memory === 'string'
-        )
-        // Fact set unchanged => keep the stored summary as is.
-        if (!added.length) return
-        const extras = parseExtractionExtras(capture.raw)
-        await this.tagFacts(mem0, added, extras)
-        if (extras.summary && mem0.saveSummary) {
-            const payload: Record<string, any> = {}
-            if (cfg.ownerId !== undefined) payload.owner_id = cfg.ownerId
-            if (cfg.salesmanId !== undefined) payload.salesmanId = cfg.salesmanId
-            try {
-                await mem0.saveSummary(cfg.userId, extras.summary, payload)
-            } catch (e) {
-                this.warn('saving summary failed', e)
-            }
-        }
-    }
-
-    /** category/label come from the same extraction response (no extra LLM call); keyword rules fill gaps. */
-    private async tagFacts(mem0: Mem0Like, added: { id: string; memory: string }[], extras: ExtractionExtras) {
-        if (!mem0.setPayload) return
-        // group by identical tag so most turns cost one Qdrant set_payload request
-        const groups = new Map<string, { tag: { category: string; label: string }; ids: string[] }>()
-        for (const f of added) {
-            const tag = resolveTag(f.memory, extras)
-            const k = `${tag.category}\u0000${tag.label}`
-            const g = groups.get(k) ?? { tag, ids: [] }
-            g.ids.push(f.id)
-            groups.set(k, g)
-        }
-        for (const g of groups.values()) {
-            try {
-                await mem0.setPayload(g.ids, { category: g.tag.category, label: g.tag.label })
-            } catch (e) {
-                this.warn('tagging facts failed (facts kept untagged)', e)
-            }
-        }
+        await addCustomerFacts(mem0, cfg, messages, { chatflowId: this.chatflowid, sessionId }, (m, e) => this.warn(m, e))
     }
 }
