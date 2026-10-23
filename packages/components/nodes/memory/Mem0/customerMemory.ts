@@ -137,7 +137,7 @@ export const buildBackfillMessages = (rows: { role: string; content: string }[],
 // ---------------------------------------------------------------------------------------------------------
 
 export const FACT_CATEGORIES = ['interest', 'objection', 'budget', 'location', 'timing', 'family', 'other'] as const
-export type FactCategory = typeof FACT_CATEGORIES[number]
+export type FactCategory = (typeof FACT_CATEGORIES)[number]
 export interface FactTag {
     category: FactCategory
     label: string
