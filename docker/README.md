@@ -28,6 +28,7 @@ The Mem0 memory node's **Self-hosted** mode stores customer facts in Qdrant. Set
 
 -   `QDRANT_URL` (e.g. `http://qdrant:6333`), `QDRANT_API_KEY` (if the Qdrant server requires one)
 -   optional: `CUSTOMER_MEMORY_COLLECTION` (default `customer_memory`), `CUSTOMER_MEMORY_EMBEDDING_DIMS` (default `1536`), `MEM0_TELEMETRY` (defaults to `false`)
+-   agentflows (no Mem0 node): `CUSTOMER_MEMORY_TOKEN_SECRET` (min 16 chars) enables `POST /api/v1/customer-memory/sealed/recall|save`, called from Custom Function steps with a token sealed by whatsapp.dt. `POST /api/v1/customer-memory/recall|save` take the plain `customerMemory` block with API-key auth.
 
 No LLM/embedding key is configured here: each request supplies the customer's own key in `overrideConfig.customerMemory`.
 Read/delete facts via `/api/v1/customer-memory` (Flowise API key auth).
