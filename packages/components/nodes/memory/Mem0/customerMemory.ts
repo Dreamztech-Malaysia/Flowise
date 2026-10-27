@@ -442,6 +442,18 @@ export const getCollectionName = (): string => process.env.CUSTOMER_MEMORY_COLLE
 /** Embedding models that accept OpenAI's `dimensions` param (OpenAI v3, Gemini via its OpenAI-compatible API). */
 export const supportsDimensions = (model: string): boolean => /^(text-embedding-3|gemini-embedding)/.test(model)
 
+/**
+ * Port for the Qdrant client. @qdrant/js-client-rest falls back to 6333 when the URL has no explicit port, so a
+ * reverse-proxied `https://qdrant.example.com` would be dialled on :6333 and time out. Use the scheme default instead.
+ */
+export const qdrantPortForUrl = (url: string): number => {
+    const u = new URL(url)
+    if (u.port) return parseInt(u.port, 10)
+    if (u.protocol === 'https:') return 443
+    // a bare docker/compose service name (http://qdrant) is Qdrant itself on its default port; a public host is a proxy
+    return u.hostname.includes('.') ? 80 : 6333
+}
+
 export const getEmbeddingDims = (): number => {
     const n = Number(process.env.CUSTOMER_MEMORY_EMBEDDING_DIMS)
     return Number.isFinite(n) && n > 0 ? n : CUSTOMER_MEMORY_DEFAULT_EMBEDDING_DIMS
@@ -508,7 +520,7 @@ export const getMem0Instance = async (cfg: CustomerMemoryConfig): Promise<Mem0Li
     const { QdrantClient } = await import('@qdrant/js-client-rest')
 
     const dims = getEmbeddingDims()
-    const client = new QdrantClient({ url: qdrantUrl, apiKey: process.env.QDRANT_API_KEY || undefined })
+    const client = new QdrantClient({ url: qdrantUrl, port: qdrantPortForUrl(qdrantUrl), apiKey: process.env.QDRANT_API_KEY || undefined })
     const embedderConfig: Record<string, any> = { apiKey: cfg.apiKey, baseURL: cfg.baseUrl, model: cfg.embeddingModel }
     // text-embedding-3-* and gemini-embedding-* accept the `dimensions` param (Gemini's default is 3072, the collection
     // is 1536); others must natively match the collection size.

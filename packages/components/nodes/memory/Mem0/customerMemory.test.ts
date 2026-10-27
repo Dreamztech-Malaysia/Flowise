@@ -11,6 +11,7 @@ import {
     injectSummary,
     parseCustomerMemoryConfig,
     parseExtractionExtras,
+    qdrantPortForUrl,
     redactSecrets,
     resolveTag,
     ruleTag,
@@ -451,6 +452,16 @@ describe('addCustomerFacts / recallCustomerFacts / queueForUser (shared with the
         await expect(slow).rejects.toThrow('boom')
         await expect(fast).resolves.toBe(2)
         expect(order).toEqual(['a', 'b'])
+    })
+})
+
+describe('qdrantPortForUrl', () => {
+    it('uses the scheme default for proxied URLs instead of the client fallback 6333', () => {
+        expect(qdrantPortForUrl('https://qdrant-dev.example.com')).toBe(443)
+        expect(qdrantPortForUrl('http://qdrant.example.com')).toBe(80)
+        expect(qdrantPortForUrl('http://qdrant')).toBe(6333)
+        expect(qdrantPortForUrl('http://qdrant:6333')).toBe(6333)
+        expect(qdrantPortForUrl('https://q.example.com:8443')).toBe(8443)
     })
 })
 
