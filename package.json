@@ -67,6 +67,7 @@
     },
     "pnpm": {
         "onlyBuiltDependencies": [
+            "better-sqlite3",
             "faiss-node",
             "sqlite3"
         ],
