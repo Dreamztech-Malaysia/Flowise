@@ -4,7 +4,9 @@
 # Run image
 # docker run -d -p 3000:3000 flowise
 
-FROM node:24-alpine
+# Pinned to a patched Node 24 (>= 24.22.1, security release 2026-10-20)
+ARG NODE_VERSION=24.22.1
+FROM node:${NODE_VERSION}-alpine
 
 # Install system dependencies and build tools
 RUN apk update && \

@@ -1,5 +1,5 @@
 # Node.js version (overridable via build-arg from CI)
-ARG NODE_VERSION=24
+ARG NODE_VERSION=24.22.1
 
 # Stage 1: Build stage
 FROM node:${NODE_VERSION}-alpine AS build
