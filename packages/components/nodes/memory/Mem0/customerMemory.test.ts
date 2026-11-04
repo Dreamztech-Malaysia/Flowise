@@ -17,9 +17,13 @@ import {
     ruleTag,
     sanitizeExtraction,
     summaryPointId,
+    supersessionPlan,
     supportsDimensions,
+    withBehaviour,
+    parseCustomerMemoryConfig as parseCfg,
     wrapLlmForCapture
 } from './customerMemory'
+import { markSuperseded } from './customerMemoryOps'
 import { addCustomerFacts, queueForUser, recallCustomerFacts, SelfHostedCustomerMemory } from './SelfHostedCustomerMemory'
 
 describe('parseCustomerMemoryConfig', () => {
@@ -62,7 +66,7 @@ describe('category/label tagging', () => {
         expect(resolveTag('Wants the family package', ex)).toEqual({ category: 'interest', label: 'Family package' })
         expect(resolveTag('Thinks price is too high', ex)).toEqual({ category: 'objection', label: 'Price Too High' })
         expect(resolveTag('Has two kids', parseExtractionExtras('garbage'))).toEqual({ category: 'family', label: 'Family' })
-        expect(ruleTag('Blue sky')).toEqual({ category: 'other', label: 'Other' })
+        expect(ruleTag('Works as a teacher')).toEqual({ category: 'other', label: 'Other' })
     })
 
     it('captures the raw LLM response only inside extractionCapture.run', async () => {
@@ -488,5 +492,52 @@ describe('summary helpers', () => {
         expect(summaryPointId('7:a')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
         expect(summaryPointId('7:a')).toBe(summaryPointId('7:a'))
         expect(summaryPointId('7:a')).not.toBe(summaryPointId('7:b'))
+    })
+})
+
+describe('feedback round 3: categories, changed facts, behaviour', () => {
+    it('puts money, colours and products in the right category', () => {
+        expect(ruleTag('Wants 0% instalments').category).toBe('budget')
+        expect(ruleTag('Pays by instalment').category).toBe('budget')
+        expect(ruleTag('Likes yellow colour').category).toBe('preference')
+        expect(ruleTag('Wants a laptop bag').category).toBe('interest')
+        expect(resolveTag('Likes yellow', parseExtractionExtras('{"memory":[{"text":"Likes yellow","category":"preference","label":"Yellow"}]}'))).toEqual({
+            category: 'preference',
+            label: 'Yellow'
+        })
+    })
+
+    it('a new budget replaces the old one, other categories only on the same label', () => {
+        const stored = [
+            { id: 'b1', category: 'budget', label: 'Budget RM3k', supersededBy: null },
+            { id: 'i1', category: 'interest', label: 'Lenovo Laptop', supersededBy: null },
+            { id: 'i2', category: 'interest', label: 'Laptop Bag', supersededBy: null },
+            { id: 'b0', category: 'budget', label: 'Budget RM1k', supersededBy: 'b1' }
+        ]
+        const plan = supersessionPlan(stored, [
+            { id: 'b2', category: 'budget', label: 'Budget RM5k' },
+            { id: 'i3', category: 'interest', label: 'lenovo laptop' }
+        ])
+        expect(Object.fromEntries(plan)).toEqual({ b1: 'b2', i1: 'i3' })
+    })
+
+    it('marks replaced facts and never throws', async () => {
+        const calls: any[] = []
+        const mem0: any = {
+            getAll: async () => ({ results: [{ id: 'b1', memory: 'Budget RM3,000', metadata: { category: 'budget', label: 'Budget RM3k' } }] }),
+            setPayload: async (ids: string[], payload: any) => calls.push([ids, payload.superseded_by])
+        }
+        const cfg: any = { userId: '7:a' }
+        expect(await markSuperseded(mem0, cfg, [{ id: 'b2', memory: 'Budget RM5,000', category: 'budget', label: 'Budget RM5k' }], () => undefined)).toBe(1)
+        expect(calls).toEqual([[['b1'], 'b2']])
+        const broken: any = { getAll: async () => { throw new Error('down') }, setPayload: async () => undefined }
+        expect(await markSuperseded(broken, cfg, [{ id: 'x', memory: 'm', category: 'budget', label: 'B' }], () => undefined)).toBe(0)
+    })
+
+    it('appends behaviour lines to the recall block', () => {
+        const cfg = parseCfg({ enabled: true, userId: '7:a', apiKey: 'k', context: 'Usually replies 9pm-11pm' })
+        expect(cfg?.context).toBe('Usually replies 9pm-11pm')
+        expect(withBehaviour('', cfg?.context)).toContain('Usually replies 9pm-11pm')
+        expect(withBehaviour('facts', undefined)).toBe('facts')
     })
 })

@@ -29,6 +29,8 @@ export interface CustomerMemoryRequest {
     llmModel?: string
     embeddingModel?: string
     backfill?: boolean | string
+    /** Behaviour lines computed by whatsapp.dt (reply hours, speed, stage, purchases); appended to recall. */
+    context?: string
 }
 
 /** Normalised config. `null` from the parser means "memory off, behave as plain buffer memory". */
@@ -41,6 +43,7 @@ export interface CustomerMemoryConfig {
     llmModel: string
     embeddingModel: string
     backfill: boolean
+    context?: string
 }
 
 const toBool = (v: unknown): boolean => v === true || v === 'true' || v === 1 || v === '1'
@@ -81,6 +84,7 @@ export const parseCustomerMemoryConfig = (raw: unknown): CustomerMemoryConfig | 
     }
 
     const str = (v: unknown, d: string) => (typeof v === 'string' && v.trim() ? v.trim() : d)
+    const context = typeof obj.context === 'string' ? obj.context.replace(/\s+\n/g, '\n').trim().slice(0, 800) : ''
     return {
         userId,
         ownerId,
@@ -89,9 +93,55 @@ export const parseCustomerMemoryConfig = (raw: unknown): CustomerMemoryConfig | 
         baseUrl: str(obj.baseUrl, CUSTOMER_MEMORY_DEFAULT_BASE_URL).replace(/\/+$/, ''),
         llmModel: str(obj.llmModel, CUSTOMER_MEMORY_DEFAULT_LLM_MODEL),
         embeddingModel: str(obj.embeddingModel, CUSTOMER_MEMORY_DEFAULT_EMBEDDING_MODEL),
-        backfill: toBool(obj.backfill)
+        backfill: toBool(obj.backfill),
+        ...(context ? { context } : {})
     }
 }
+
+export const CUSTOMER_BEHAVIOUR_HEADER = 'How this customer behaves (from real chat and purchase data):'
+
+/** Recall block + behaviour lines. Either part may be empty. */
+export const withBehaviour = (factBlock: string, context?: string): string => {
+    const ctx = (context ?? '').trim()
+    if (!ctx) return factBlock
+    const block = `${CUSTOMER_BEHAVIOUR_HEADER}\n${ctx}`
+    return factBlock ? `${factBlock}\n${block}` : block
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Changed facts: the newest value of a single-value fact replaces the old one (old kept, marked superseded)
+// ---------------------------------------------------------------------------------------------------------
+
+/** A customer has one current value of these (a new budget replaces the old budget). */
+export const SINGLE_VALUE_CATEGORIES = ['budget', 'location'] as const
+
+export interface StoredFact {
+    id: string
+    category: string | null
+    label: string | null
+    supersededBy: string | null
+}
+
+/** Does `fresh` replace `old`? Same category and same label, or same single-value category. */
+export const supersedes = (old: StoredFact, fresh: { id: string; category: string; label: string }): boolean => {
+    if (!old.id || old.id === fresh.id || old.supersededBy) return false
+    if (!old.category || old.category !== fresh.category) return false
+    if ((SINGLE_VALUE_CATEGORIES as readonly string[]).includes(fresh.category)) return true
+    const norm = (s: string | null) => (s ?? '').trim().toLowerCase()
+    return norm(old.label) !== '' && norm(old.label) !== 'other' && norm(old.label) === norm(fresh.label)
+}
+
+/** Old fact id -> id of the newest added fact replacing it. */
+export const supersessionPlan = (stored: StoredFact[], added: { id: string; category: string; label: string }[]): Map<string, string> => {
+    const plan = new Map<string, string>()
+    // `added` is in extraction order; the last one of a category wins
+    for (const a of added) for (const s of stored) if (supersedes(s, a)) plan.set(s.id, a.id)
+    // an added fact never supersedes another added fact of the same turn
+    for (const a of added) plan.delete(a.id)
+    return plan
+}
+
+export const isSuperseded = (r: any): boolean => Boolean(r?.metadata?.superseded_by ?? r?.payload?.superseded_by ?? r?.superseded_by)
 
 /** Render recalled facts as one prompt block; empty string when there is nothing to inject. */
 export const formatFacts = (facts: { memory?: string }[], limit: number): string => {
@@ -136,7 +186,7 @@ export const buildBackfillMessages = (rows: { role: string; content: string }[],
 // Category + label tagging (piggybacks on mem0's own extraction LLM call; no extra request)
 // ---------------------------------------------------------------------------------------------------------
 
-export const FACT_CATEGORIES = ['interest', 'objection', 'budget', 'location', 'timing', 'family', 'other'] as const
+export const FACT_CATEGORIES = ['interest', 'preference', 'objection', 'budget', 'location', 'timing', 'family', 'other'] as const
 export type FactCategory = (typeof FACT_CATEGORIES)[number]
 export interface FactTag {
     category: FactCategory
@@ -151,7 +201,11 @@ export interface FactTag {
 export const CUSTOMER_MEMORY_TAG_INSTRUCTIONS =
     'Only facts the customer stated about themselves; each "text" max 8 words, no subject, no dates ' +
     '(e.g. "Budget RM500", "Has 2 kids", "Lives in Johor Bahru"). ' +
-    'For every item in "memory" also output "category" (exactly one of: interest, objection, budget, location, timing, family, other) ' +
+    'For every item in "memory" also output "category" (exactly one of: interest, preference, objection, budget, location, timing, family, other). ' +
+    'interest = a product or service they want or ask about (e.g. "Lenovo laptop", "Laptop bag", "Warranty"). ' +
+    'preference = how they like it: colour, size, style, brand, feature, language (e.g. "Likes yellow", "Prefers Malay"). ' +
+    'budget = ONLY money: amount they can spend, price range or how they pay (cash, instalment, 0% instalment). Never a product. ' +
+    'location = where they are or want delivery (a real place). timing = when they can buy, collect or be contacted. ' +
     'and "label" (a short normalized 1-4 word Title-case phrase, e.g. "Family Package", "Price Too High", "Budget RM50k"). Keep "text" unchanged. ' +
     'If "memory" is non-empty, also output a top-level "summary": an "at a glance" description of the customer in 1-2 sentences (max 40 words), ' +
     'rewriting the Current Customer Summary to include the new facts. Omit "summary" when "memory" is empty.'
@@ -268,7 +322,12 @@ const CATEGORY_RULES: { category: FactCategory; label: string; re: RegExp }[] = 
     {
         category: 'budget',
         label: 'Budget',
-        re: /\b(budget|afford|rm ?\d|\$ ?\d|usd|myr|price range|loan|financing|installment|down ?payment)\b/i
+        re: /\b(budget|afford|rm ?\d|\$ ?\d|usd|myr|price range|loan|financing|instal?l?ments?|ansuran|0 ?% |down ?payment|cash)\b/i
+    },
+    {
+        category: 'preference',
+        label: 'Preference',
+        re: /\b(colou?rs?|red|blue|green|yellow|black|white|pink|purple|grey|gray|silver|gold|size|style|brand|prefers? (to )?(chat|speak|talk|reply)|in (english|malay|bahasa|chinese|mandarin))\b/i
     },
     {
         category: 'family',
