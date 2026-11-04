@@ -521,6 +521,15 @@ describe('feedback round 3: categories, changed facts, behaviour', () => {
         expect(Object.fromEntries(plan)).toEqual({ b1: 'b2', i1: 'i3' })
     })
 
+    it('a payment method never replaces a budget amount (and the other way round)', () => {
+        const stored = [
+            { id: 'b1', category: 'budget', label: 'Budget RM3,000', supersededBy: null },
+            { id: 'p1', category: 'budget', label: '0% Instalments', supersededBy: null }
+        ]
+        expect(Object.fromEntries(supersessionPlan(stored, [{ id: 'p2', category: 'budget', label: 'Cash Payment' }]))).toEqual({})
+        expect(Object.fromEntries(supersessionPlan(stored, [{ id: 'b2', category: 'budget', label: 'Budget RM5,000' }]))).toEqual({ b1: 'b2' })
+    })
+
     it('marks replaced facts and never throws', async () => {
         const calls: any[] = []
         const mem0: any = {

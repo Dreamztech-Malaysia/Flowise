@@ -115,6 +115,9 @@ export const withBehaviour = (factBlock: string, context?: string): string => {
 /** A customer has one current value of these (a new budget replaces the old budget). */
 export const SINGLE_VALUE_CATEGORIES = ['budget', 'location'] as const
 
+/** "Budget RM5,000", "RM 3k", "$500": an amount, not a payment method like "0% instalments". */
+const isAmount = (label: string | null): boolean => /(rm|myr|usd|\$)\s?\d|\d\s?(k|rm)\b|\d{3,}/i.test(label ?? '') && !/%/.test(label ?? '')
+
 export interface StoredFact {
     id: string
     category: string | null
@@ -126,7 +129,10 @@ export interface StoredFact {
 export const supersedes = (old: StoredFact, fresh: { id: string; category: string; label: string }): boolean => {
     if (!old.id || old.id === fresh.id || old.supersededBy) return false
     if (!old.category || old.category !== fresh.category) return false
-    if ((SINGLE_VALUE_CATEGORIES as readonly string[]).includes(fresh.category)) return true
+    if (fresh.category === 'budget') {
+        // amounts replace amounts; a payment method only replaces the same payment method (same label)
+        if (isAmount(fresh.label) && isAmount(old.label)) return true
+    } else if ((SINGLE_VALUE_CATEGORIES as readonly string[]).includes(fresh.category)) return true
     const norm = (s: string | null) => (s ?? '').trim().toLowerCase()
     return norm(old.label) !== '' && norm(old.label) !== 'other' && norm(old.label) === norm(fresh.label)
 }
