@@ -8,6 +8,8 @@ import {
     CustomerMemoryConfig,
     formatFacts,
     getMem0Instance,
+    isSuperseded,
+    withBehaviour,
     Mem0ChatMessage,
     Mem0Like,
     parseCustomerMemoryConfig,
@@ -113,7 +115,10 @@ export class SelfHostedCustomerMemory extends FlowiseMemory implements MemoryMet
                 RECALL_TIMEOUT_MS,
                 'mem0 search'
             )
-            return formatFacts(res?.results ?? [], this.recallLimit)
+            return withBehaviour(
+                formatFacts((res?.results ?? []).filter((r: any) => !isSuperseded(r)), this.recallLimit),
+                cfg.context
+            )
         } catch (e) {
             this.warn('recall failed, continuing without facts', e)
             return ''

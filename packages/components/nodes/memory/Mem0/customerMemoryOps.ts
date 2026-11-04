@@ -13,8 +13,12 @@ import {
     Mem0ChatMessage,
     Mem0Like,
     parseExtractionExtras,
+    isSuperseded,
     resolveTag,
+    StoredFact,
+    supersessionPlan,
     TokenUsage,
+    withBehaviour,
     withTimeout
 } from './customerMemory'
 
@@ -77,6 +81,7 @@ export const addCustomerFacts = async (
     if (!facts.length) return { added: [], summary: null, usage }
     const extras = parseExtractionExtras(capture.raw)
     const added = await tagFacts(mem0, facts, extras, warn)
+    await markSuperseded(mem0, cfg, added, warn)
     let summary: string | null = null
     if (extras.summary && mem0.saveSummary) {
         const payload: Record<string, any> = {}
@@ -90,6 +95,37 @@ export const addCustomerFacts = async (
         }
     }
     return { added, summary, usage }
+}
+
+/**
+ * A changed fact replaces the old one: the old point is kept (history) but tagged superseded_by/superseded_at, so
+ * recall and the dashboards use only the newest value. Never throws.
+ */
+export const markSuperseded = async (
+    mem0: Mem0Like,
+    cfg: CustomerMemoryConfig,
+    added: AddedFact[],
+    warn: (msg: string, err?: unknown) => void
+): Promise<number> => {
+    if (!added.length || !mem0.setPayload) return 0
+    try {
+        const res = await mem0.getAll({ topK: 500, filters: { user_id: cfg.userId } })
+        const stored: StoredFact[] = (res?.results ?? []).map((r: any) => ({
+            id: String(r?.id ?? ''),
+            category: typeof r?.metadata?.category === 'string' ? r.metadata.category : null,
+            label: typeof r?.metadata?.label === 'string' ? r.metadata.label : null,
+            supersededBy: typeof r?.metadata?.superseded_by === 'string' ? r.metadata.superseded_by : null
+        }))
+        const plan = supersessionPlan(stored, added)
+        const at = new Date().toISOString()
+        const byNew = new Map<string, string[]>()
+        for (const [oldId, newId] of plan) byNew.set(newId, [...(byNew.get(newId) ?? []), oldId])
+        for (const [newId, oldIds] of byNew) await mem0.setPayload(oldIds, { superseded_by: newId, superseded_at: at })
+        return plan.size
+    } catch (e) {
+        warn('marking replaced facts failed (old facts kept as current)', e)
+        return 0
+    }
 }
 
 /** category/label come from the same extraction response (no extra LLM call); keyword rules fill gaps. */
@@ -157,7 +193,7 @@ export const recallCustomerFacts = async (
             : withTimeout(mem0.getAll({ topK: limit, filters }), RECALL_TIMEOUT_MS, 'mem0 getAll')
     )
     const facts = (res?.results ?? [])
-        .filter((r: any) => r && typeof r.memory === 'string' && r.memory.trim())
+        .filter((r: any) => r && typeof r.memory === 'string' && r.memory.trim() && !isSuperseded(r))
         .slice(0, limit)
         .map((r: any) => ({
             id: String(r.id),
@@ -174,6 +210,6 @@ export const recallCustomerFacts = async (
         }
     }
     const factBlock = formatFacts(facts, limit)
-    const text = factBlock ? (summary ? `${factBlock}\nAt a glance: ${summary}` : factBlock) : ''
+    const text = withBehaviour(factBlock ? (summary ? `${factBlock}\nAt a glance: ${summary}` : factBlock) : '', cfg.context)
     return { facts, summary, text, usage: capture.usage ?? emptyUsage() }
 }

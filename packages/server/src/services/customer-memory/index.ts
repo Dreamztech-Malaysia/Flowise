@@ -187,11 +187,12 @@ const getSummary = async (ownerId?: string, since?: string): Promise<CustomerMem
         if (isNaN(sinceTs)) throw new InternalFlowiseError(StatusCodes.BAD_REQUEST, 'since must be YYYY-MM-DD')
     }
     const filter = ownerId ? ownerCondition(ownerId) : undefined
-    const points = await scrollAll(filter, ['user_id', 'salesmanId', 'category', 'label', 'createdAt'])
+    const points = await scrollAll(filter, ['user_id', 'salesmanId', 'category', 'label', 'createdAt', 'superseded_by'])
     const rows = new Map<string, CustomerMemorySummaryRow>()
     for (const pt of points) {
         const p = pt.payload ?? {}
-        if (!p.user_id) continue
+        // a replaced value (old budget) is history, not a current fact
+        if (!p.user_id || p.superseded_by) continue
         const created = toIso(p.createdAt)
         if (!created) continue
         if (sinceTs !== undefined && new Date(created).getTime() < sinceTs) continue
