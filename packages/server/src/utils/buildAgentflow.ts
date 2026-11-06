@@ -1663,7 +1663,9 @@ export const executeAgentFlow = async ({
 
     // If not a recursive call or parent execution not found, proceed normally
     if (!isRecursive) {
-        const previousExecutions = await appDataSource.getRepository(Execution).find({
+        // Only the newest execution is used. Loading every row (with full executionData) for a
+        // long-lived session pulled hundreds of MB onto the heap and crashed queue workers.
+        const latestExecution = await appDataSource.getRepository(Execution).findOne({
             where: {
                 sessionId,
                 agentflowId: chatflowid,
@@ -1674,8 +1676,8 @@ export const executeAgentFlow = async ({
             }
         })
 
-        if (previousExecutions.length) {
-            previousExecution = previousExecutions[0]
+        if (latestExecution) {
+            previousExecution = latestExecution
         }
     }
 
